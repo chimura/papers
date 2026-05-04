@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "750841257618",
+    "project_id": "papers-sci",
+    "storage_bucket": "papers-sci.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:750841257618:android:4d2fa0dcae83c74036904b",
+        "android_client_info": {
+          "package_name": "com.sci.sci"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCmob62jMLkopLR3ZdnWT9EpzgIOsYBQmg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
