@@ -50,7 +50,7 @@ class SyncState {
 /// - Pull: Download Drive files that aren't cached locally
 /// - Metadata is exported as a JSON manifest alongside PDFs
 class DriveSyncService {
-  static const _manifestFileName = 'sci_manifest.json';
+  static const _manifestFileName = 'papers_manifest.json';
 
   final DriveService _driveService;
   final PaperDao _paperDao;
@@ -129,7 +129,7 @@ class DriveSyncService {
     };
 
     final docsDir = await getApplicationDocumentsDirectory();
-    final pdfsDir = Directory(p.join(docsDir.path, 'sci_pdfs'));
+    final pdfsDir = Directory(p.join(docsDir.path, 'papers_pdfs'));
     if (!pdfsDir.existsSync()) {
       pdfsDir.createSync(recursive: true);
     }
@@ -229,7 +229,7 @@ class DriveSyncService {
     if (manifestFile == null) return;
 
     final tempDir = await getApplicationDocumentsDirectory();
-    final tempPath = p.join(tempDir.path, 'sci_manifest_remote.json');
+    final tempPath = p.join(tempDir.path, 'papers_manifest_remote.json');
     await _driveService.downloadFile(
       driveFileId: manifestFile.id,
       localPath: tempPath,

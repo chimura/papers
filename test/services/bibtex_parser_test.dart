@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sci/features/import/services/bibtex_parser_service.dart';
+import 'package:papers/features/import/services/bibtex_parser_service.dart';
 
 void main() {
   final parser = BibtexParserService();

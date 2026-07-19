@@ -1,4 +1,4 @@
-# Sci
+# Papers
 
 A reference-management app for researchers, built with Flutter. Organize papers,
 read and annotate PDFs, generate citations (APA/MLA/Chicago/Harvard/IEEE), and
@@ -12,7 +12,7 @@ Runs on Windows desktop and Android.
 - **Import**: by DOI (CrossRef lookup), PDF file, or pasted BibTeX
 - **Reader**: PDF viewer with highlight and note annotations
 - **Citations**: formatted citations in 5 styles, BibTeX/RIS export
-- **Sync**: PDFs + a JSON metadata manifest in a visible `Sci` folder in Google Drive
+- **Sync**: PDFs + a JSON metadata manifest in a visible `Papers` folder in Google Drive
 
 ## Running on Windows
 

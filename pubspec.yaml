@@ -1,4 +1,4 @@
-name: sci
+name: papers
 description: "A reference management app for researchers."
 publish_to: 'none'
 version: 1.0.0+1

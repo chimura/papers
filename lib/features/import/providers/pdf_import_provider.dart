@@ -58,7 +58,7 @@ class PdfImportNotifier extends Notifier<PdfImportState> {
 
       // Copy PDF to app documents directory
       final docsDir = await getApplicationDocumentsDirectory();
-      final pdfsDir = Directory(p.join(docsDir.path, 'sci_pdfs'));
+      final pdfsDir = Directory(p.join(docsDir.path, 'papers_pdfs'));
       if (!pdfsDir.existsSync()) {
         pdfsDir.createSync(recursive: true);
       }

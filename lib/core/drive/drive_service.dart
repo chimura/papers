@@ -3,9 +3,11 @@ import 'dart:io';
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:http/http.dart' as http;
 
-/// Manages PDF file storage in a visible "Sci" folder in the user's Google Drive.
+/// Manages PDF file storage in a visible "Papers" folder in the user's
+/// Google Drive.
 class DriveService {
-  static const _appFolderName = 'Sci';
+  static const _appFolderName = 'Papers';
+  static const _legacyFolderName = 'Sci';
 
   final http.Client _client;
   late final drive.DriveApi _driveApi;
@@ -15,33 +17,41 @@ class DriveService {
     _driveApi = drive.DriveApi(_client);
   }
 
-  /// Ensure the "Sci" folder exists in Drive root, create if needed.
+  /// Ensure the "Papers" folder exists in Drive root, create if needed.
+  /// A leftover "Sci" folder from before the app was renamed is adopted
+  /// and renamed instead of being abandoned.
   Future<String> _getOrCreateAppFolder() async {
     if (_appFolderId != null) return _appFolderId!;
 
-    // Search for existing folder
-    final result = await _driveApi.files.list(
-      q: "name = '$_appFolderName' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
-      spaces: 'drive',
-      $fields: 'files(id, name)',
-    );
-
-    if (result.files != null && result.files!.isNotEmpty) {
-      _appFolderId = result.files!.first.id;
-      return _appFolderId!;
+    final existingId = await _findFolder(_appFolderName);
+    if (existingId != null) {
+      return _appFolderId = existingId;
     }
 
-    // Create folder
+    final legacyId = await _findFolder(_legacyFolderName);
+    if (legacyId != null) {
+      await _driveApi.files.update(drive.File()..name = _appFolderName, legacyId);
+      return _appFolderId = legacyId;
+    }
+
     final folder = drive.File()
       ..name = _appFolderName
       ..mimeType = 'application/vnd.google-apps.folder';
 
     final created = await _driveApi.files.create(folder);
-    _appFolderId = created.id;
-    return _appFolderId!;
+    return _appFolderId = created.id!;
   }
 
-  /// Upload a PDF file to the Sci folder. Returns the Drive file ID.
+  Future<String?> _findFolder(String name) async {
+    final result = await _driveApi.files.list(
+      q: "name = '$name' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+      spaces: 'drive',
+      $fields: 'files(id, name)',
+    );
+    return result.files?.firstOrNull?.id;
+  }
+
+  /// Upload a PDF file to the Papers folder. Returns the Drive file ID.
   Future<String> uploadPdf({
     required String localPath,
     required String fileName,
@@ -84,7 +94,7 @@ class DriveService {
     await _driveApi.files.delete(driveFileId);
   }
 
-  /// List all files in the Sci folder.
+  /// List all files in the Papers folder.
   Future<List<DriveFileInfo>> listFiles() async {
     final folderId = await _getOrCreateAppFolder();
 
@@ -105,8 +115,8 @@ class DriveService {
     }).toList();
   }
 
-  /// Check if the Sci folder exists (user has synced before).
-  Future<bool> hasSciFolder() async {
+  /// Check if the Papers folder exists (user has synced before).
+  Future<bool> hasAppFolder() async {
     final result = await _driveApi.files.list(
       q: "name = '$_appFolderName' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
       spaces: 'drive',

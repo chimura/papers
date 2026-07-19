@@ -18,7 +18,7 @@ class CrossRefService {
 
     final response = await _client.get(uri, headers: {
       'Accept': 'application/json',
-      'User-Agent': 'Sci/1.0 (reference manager; mailto:sci@example.com)',
+      'User-Agent': 'Papers/1.0 (reference manager; mailto:chimura.willian@gmail.com)',
     });
 
     if (response.statusCode != 200) return null;
@@ -37,7 +37,7 @@ class CrossRefService {
 
     final response = await _client.get(uri, headers: {
       'Accept': 'application/json',
-      'User-Agent': 'Sci/1.0 (reference manager; mailto:sci@example.com)',
+      'User-Agent': 'Papers/1.0 (reference manager; mailto:chimura.willian@gmail.com)',
     });
 
     if (response.statusCode != 200) return [];

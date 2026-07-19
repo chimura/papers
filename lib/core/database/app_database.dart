@@ -1,10 +1,13 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
 class AppDatabase {
-  static const _databaseName = 'sci.db';
+  static const _databaseName = 'papers.db';
+  static const _legacyDatabaseName = 'sci.db';
   static const _databaseVersion = 1;
 
   AppDatabase._() : _overridePath = null;
@@ -31,8 +34,17 @@ class AppDatabase {
   }
 
   Future<Database> _initDatabase() async {
-    final path = _overridePath ??
-        join((await getApplicationDocumentsDirectory()).path, _databaseName);
+    String? path = _overridePath;
+    if (path == null) {
+      final documentsPath = (await getApplicationDocumentsDirectory()).path;
+      path = join(documentsPath, _databaseName);
+
+      // The app used to be called "sci" — carry over its database.
+      final legacy = File(join(documentsPath, _legacyDatabaseName));
+      if (!File(path).existsSync() && legacy.existsSync()) {
+        legacy.renameSync(path);
+      }
+    }
     return openDatabase(
       path,
       version: _databaseVersion,

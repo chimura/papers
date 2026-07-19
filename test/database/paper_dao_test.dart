@@ -1,9 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sci/core/database/app_database.dart';
-import 'package:sci/core/database/daos/collection_dao.dart';
-import 'package:sci/core/database/daos/paper_dao.dart';
-import 'package:sci/core/models/author_model.dart';
-import 'package:sci/core/models/paper_model.dart';
+import 'package:papers/core/database/app_database.dart';
+import 'package:papers/core/database/daos/collection_dao.dart';
+import 'package:papers/core/database/daos/paper_dao.dart';
+import 'package:papers/core/models/author_model.dart';
+import 'package:papers/core/models/paper_model.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 PaperModel _paper({

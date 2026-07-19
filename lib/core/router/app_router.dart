@@ -115,7 +115,7 @@ class AdaptiveScaffold extends StatelessWidget {
             leading: Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Text(
-                'Sci',
+                'Papers',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
                       color: Theme.of(context).colorScheme.primary,

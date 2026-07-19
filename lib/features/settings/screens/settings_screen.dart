@@ -164,7 +164,7 @@ class SettingsScreen extends ConsumerWidget {
           _SectionHeader('About'),
           const ListTile(
             leading: Icon(Icons.info_outline),
-            title: Text('Sci'),
+            title: Text('Papers'),
             subtitle: Text('Version 1.0.0'),
           ),
           ListTile(

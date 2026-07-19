@@ -159,7 +159,7 @@ class DesktopGoogleAuth {
         request.response.write(
           '<html><body style="font-family: sans-serif">'
           '<h3>Signed in</h3>'
-          '<p>You can close this window and return to Sci.</p>'
+          '<p>You can close this window and return to Papers.</p>'
           '</body></html>',
         );
       }

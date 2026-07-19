@@ -18,7 +18,7 @@ class SciApp extends ConsumerWidget {
     final themeMode = settings?.themeMode.themeMode ?? ThemeMode.system;
 
     return MaterialApp.router(
-      title: 'Sci',
+      title: 'Papers',
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: themeMode,
