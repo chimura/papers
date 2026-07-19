@@ -36,6 +36,7 @@ dependencies:
   pdfrx:
 
   # Utilities
+  crypto:
   freezed_annotation:
   json_annotation:
   uuid:

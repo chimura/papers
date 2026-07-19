@@ -61,20 +61,22 @@ class DriveSyncService {
   })  : _driveService = driveService,
         _paperDao = paperDao;
 
-  /// Full sync: push local changes, then pull remote changes.
+  /// Full sync: pull remote changes first, then push local state.
   Future<SyncState> sync() async {
     try {
+      // Pull: merge remote manifest first, so papers created on other
+      // devices exist locally before we upload our manifest (which
+      // replaces the remote one).
+      await _pullManifest();
+
       // Push: upload PDFs that aren't on Drive yet
       final uploaded = await _pushPdfs();
-
-      // Push: upload metadata manifest
-      await _pushManifest();
 
       // Pull: download PDFs from Drive that we don't have locally
       final downloaded = await _pullPdfs();
 
-      // Pull: merge remote manifest if it has papers we don't
-      await _pullManifest();
+      // Push: upload the merged metadata manifest
+      await _pushManifest();
 
       return SyncState(
         status: SyncStatus.success,
@@ -116,14 +118,15 @@ class DriveSyncService {
     return count;
   }
 
-  /// Download Drive PDFs that we don't have locally.
+  /// Download Drive PDFs that we don't have locally and link them to their
+  /// paper records so they can be opened from the app.
   Future<int> _pullPdfs() async {
     final driveFiles = await _driveService.listFiles();
     final papers = await _paperDao.getAllPapers();
-    final localDriveIds = papers
-        .where((p) => p.driveFileId != null)
-        .map((p) => p.driveFileId!)
-        .toSet();
+    final papersByDriveId = {
+      for (final paper in papers)
+        if (paper.driveFileId != null) paper.driveFileId!: paper,
+    };
 
     final docsDir = await getApplicationDocumentsDirectory();
     final pdfsDir = Directory(p.join(docsDir.path, 'sci_pdfs'));
@@ -134,13 +137,34 @@ class DriveSyncService {
     var count = 0;
     for (final driveFile in driveFiles) {
       if (driveFile.name == _manifestFileName) continue;
-      if (localDriveIds.contains(driveFile.id)) continue;
+
+      final paper = papersByDriveId[driveFile.id];
+      if (paper != null &&
+          paper.localPdfPath != null &&
+          File(paper.localPdfPath!).existsSync()) {
+        continue;
+      }
 
       final localPath = p.join(pdfsDir.path, driveFile.name);
       await _driveService.downloadFile(
         driveFileId: driveFile.id,
         localPath: localPath,
       );
+
+      if (paper != null) {
+        await _paperDao.updatePaper(paper.copyWith(localPdfPath: localPath));
+      } else {
+        // A PDF on Drive that no paper references (e.g. uploaded before a
+        // manifest existed): add a stub entry so it shows up in the library.
+        final now = DateTime.now();
+        await _paperDao.insertPaper(PaperModel(
+          title: p.basenameWithoutExtension(driveFile.name),
+          driveFileId: driveFile.id,
+          localPdfPath: localPath,
+          dateAdded: now,
+          dateModified: now,
+        ));
+      }
       count++;
     }
 
@@ -214,14 +238,34 @@ class DriveSyncService {
     final jsonStr = await File(tempPath).readAsString();
     final manifest = jsonDecode(jsonStr) as List<dynamic>;
 
+    // Existing papers, indexed for duplicate detection. DOI is the primary
+    // key; Drive file ID and normalized title cover papers without one.
+    final localPapers = await _paperDao.getAllPapers();
+    final knownDois = {
+      for (final paper in localPapers)
+        if (paper.doi != null) paper.doi!,
+    };
+    final knownDriveIds = {
+      for (final paper in localPapers)
+        if (paper.driveFileId != null) paper.driveFileId!,
+    };
+    final knownTitles = {
+      for (final paper in localPapers) paper.title.trim().toLowerCase(),
+    };
+
     for (final entry in manifest) {
       final map = entry as Map<String, dynamic>;
       final doi = map['doi'] as String?;
+      final driveFileId = map['drive_file_id'] as String?;
+      final title = (map['title'] as String?)?.trim().toLowerCase();
 
-      // Skip if we already have this paper (by DOI)
-      if (doi != null) {
-        final existing = await _paperDao.getPaperByDoi(doi);
-        if (existing != null) continue;
+      if (doi != null && knownDois.contains(doi)) continue;
+      if (driveFileId != null && knownDriveIds.contains(driveFileId)) continue;
+      if (doi == null &&
+          driveFileId == null &&
+          title != null &&
+          knownTitles.contains(title)) {
+        continue;
       }
 
       final now = DateTime.now();
@@ -255,6 +299,9 @@ class DriveSyncService {
       );
 
       await _paperDao.insertPaper(paper);
+      if (doi != null) knownDois.add(doi);
+      if (driveFileId != null) knownDriveIds.add(driveFileId);
+      knownTitles.add(paper.title.trim().toLowerCase());
     }
 
     await File(tempPath).delete();

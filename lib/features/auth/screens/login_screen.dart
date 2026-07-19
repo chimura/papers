@@ -30,6 +30,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  Future<void> _continueOffline() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      await GoogleAuthService().signInAnonymously();
+    } catch (e) {
+      setState(() => _error =
+          'Could not start a local session: $e\n'
+          '(Anonymous sign-in must be enabled in the Firebase console.)');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -76,6 +93,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         : const Icon(Icons.login),
                     label: Text(_isLoading ? 'Signing in...' : 'Sign in with Google'),
                   ),
+                ),
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: _isLoading ? null : _continueOffline,
+                  child: const Text('Continue without an account (local only)'),
                 ),
                 if (_error != null) ...[
                   const SizedBox(height: 16),

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
@@ -6,9 +7,16 @@ class AppDatabase {
   static const _databaseName = 'sci.db';
   static const _databaseVersion = 1;
 
-  AppDatabase._();
+  AppDatabase._() : _overridePath = null;
+
+  /// Opens the database at [path] (e.g. `inMemoryDatabasePath`) instead of
+  /// the application documents directory.
+  @visibleForTesting
+  AppDatabase.forPath(String path) : _overridePath = path;
+
   static final AppDatabase instance = AppDatabase._();
 
+  final String? _overridePath;
   Database? _database;
 
   Future<Database> get database async {
@@ -16,9 +24,15 @@ class AppDatabase {
     return _database!;
   }
 
+  @visibleForTesting
+  Future<void> close() async {
+    await _database?.close();
+    _database = null;
+  }
+
   Future<Database> _initDatabase() async {
-    final documentsDir = await getApplicationDocumentsDirectory();
-    final path = join(documentsDir.path, _databaseName);
+    final path = _overridePath ??
+        join((await getApplicationDocumentsDirectory()).path, _databaseName);
     return openDatabase(
       path,
       version: _databaseVersion,

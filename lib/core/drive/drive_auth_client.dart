@@ -1,6 +1,9 @@
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 
+import '../auth/desktop_google_auth.dart';
+import '../auth/google_auth_service.dart';
+
 /// An HTTP client that injects the Google access token into every request.
 /// Used to authenticate Google Drive API calls.
 class DriveAuthClient extends http.BaseClient {
@@ -10,23 +13,30 @@ class DriveAuthClient extends http.BaseClient {
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
-    final account = await _getAccount();
-    if (account != null) {
-      final authClient = account.authorizationClient;
-      final authorization = await authClient.authorizationForScopes([
-        'https://www.googleapis.com/auth/drive.file',
-      ]);
-      if (authorization != null) {
-        request.headers['Authorization'] =
-            'Bearer ${authorization.accessToken}';
-      }
+    final token = await _getAccessToken();
+    if (token == null) {
+      throw const GoogleSignInSetupException(
+          'Not signed in with Google — sign in from Settings before syncing.');
     }
+    request.headers['Authorization'] = 'Bearer $token';
     return _inner.send(request);
   }
 
-  Future<GoogleSignInAccount?> _getAccount() async {
-    final googleSignIn = GoogleSignIn.instance;
-    return googleSignIn.attemptLightweightAuthentication();
+  Future<String?> _getAccessToken() async {
+    if (useDesktopGoogleAuth) {
+      return DesktopGoogleAuth.instance.getAccessToken();
+    }
+
+    await ensureGoogleSignInInitialized();
+    final account =
+        await GoogleSignIn.instance.attemptLightweightAuthentication();
+    if (account == null) return null;
+
+    final authorization =
+        await account.authorizationClient.authorizationForScopes([
+      'https://www.googleapis.com/auth/drive.file',
+    ]);
+    return authorization?.accessToken;
   }
 
   @override
