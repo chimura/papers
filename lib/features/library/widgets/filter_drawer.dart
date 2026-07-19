@@ -3,20 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/daos/collection_dao.dart';
 import '../models/library_filter.dart';
+import '../providers/collection_providers.dart';
 import '../providers/library_filter_provider.dart';
-
-final collectionDaoProvider =
-    Provider<CollectionDao>((ref) => CollectionDao());
-
-final collectionsProvider = FutureProvider<List<CollectionRecord>>((ref) async {
-  final dao = ref.read(collectionDaoProvider);
-  return dao.getAll();
-});
-
-final allTagsProvider = FutureProvider<List<String>>((ref) async {
-  final dao = ref.read(collectionDaoProvider);
-  return dao.getAllTagNames();
-});
 
 class FilterDrawer extends ConsumerWidget {
   const FilterDrawer({super.key});
@@ -101,7 +89,18 @@ class FilterDrawer extends ConsumerWidget {
                   const SizedBox(height: 16),
 
                   // Collections
-                  Text('Collections', style: theme.textTheme.titleSmall),
+                  Row(
+                    children: [
+                      Text('Collections', style: theme.textTheme.titleSmall),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.add, size: 20),
+                        tooltip: 'New collection',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => _createCollection(context, ref),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 8),
                   collectionsAsync.when(
                     loading: () =>
@@ -110,7 +109,8 @@ class FilterDrawer extends ConsumerWidget {
                     data: (collections) {
                       if (collections.isEmpty) {
                         return Text(
-                          'No collections yet',
+                          'No collections yet — use + to create one, then '
+                          'add papers from their detail menu.',
                           style: theme.textTheme.bodySmall,
                         );
                       }
@@ -124,12 +124,17 @@ class FilterDrawer extends ConsumerWidget {
                                 .read(libraryFilterProvider.notifier)
                                 .setCollection(null),
                           ),
-                          ...collections.map((c) => ChoiceChip(
-                                label: Text(c.name),
-                                selected: filter.collectionId == c.id,
-                                onSelected: (_) => ref
-                                    .read(libraryFilterProvider.notifier)
-                                    .setCollection(c.id),
+                          ...collections.map((c) => GestureDetector(
+                                onLongPress: () =>
+                                    _deleteCollection(context, ref, c),
+                                child: ChoiceChip(
+                                  label: Text(c.name),
+                                  selected: filter.collectionId == c.id,
+                                  tooltip: 'Long-press to delete',
+                                  onSelected: (_) => ref
+                                      .read(libraryFilterProvider.notifier)
+                                      .setCollection(c.id),
+                                ),
                               )),
                         ],
                       );
@@ -172,5 +177,69 @@ class FilterDrawer extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _createCollection(BuildContext context, WidgetRef ref) async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('New collection'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Name'),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+
+    final trimmed = name?.trim() ?? '';
+    if (trimmed.isEmpty) return;
+    await ref.read(collectionDaoProvider).insert(CollectionRecord(
+          name: trimmed,
+          createdAt: DateTime.now(),
+        ));
+    ref.invalidate(collectionsProvider);
+  }
+
+  Future<void> _deleteCollection(
+      BuildContext context, WidgetRef ref, CollectionRecord collection) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Delete "${collection.name}"?'),
+        content: const Text('Papers in the collection are not deleted.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    await ref.read(collectionDaoProvider).delete(collection.id!);
+    if (ref.read(libraryFilterProvider).collectionId == collection.id) {
+      ref.read(libraryFilterProvider.notifier).setCollection(null);
+    }
+    ref.invalidate(collectionsProvider);
+    ref.invalidate(collectionPaperIdsProvider);
   }
 }

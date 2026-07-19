@@ -12,7 +12,16 @@ class LibraryFilterNotifier extends Notifier<LibraryFilter> {
   LibraryFilter build() => const LibraryFilter();
 
   void setCollection(int? collectionId) {
-    state = state.copyWith(collectionId: collectionId);
+    // Not copyWith: passing null there would keep the previous collection.
+    state = LibraryFilter(
+      collectionId: collectionId,
+      tags: state.tags,
+      yearFrom: state.yearFrom,
+      yearTo: state.yearTo,
+      favoritesOnly: state.favoritesOnly,
+      sortBy: state.sortBy,
+      sortDescending: state.sortDescending,
+    );
   }
 
   void toggleTag(String tag) {

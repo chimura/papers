@@ -39,11 +39,53 @@ class PaperDao {
     });
   }
 
+  /// Updates the paper row and rewrites its author/tag relations to match
+  /// [paper]. Use this instead of [updatePaper] when authors or tags changed.
+  Future<void> updatePaperWithRelations(PaperModel paper) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      await txn.update(
+        'papers',
+        paper.toMap(),
+        where: 'id = ?',
+        whereArgs: [paper.id],
+      );
+
+      await txn.delete('paper_authors',
+          where: 'paper_id = ?', whereArgs: [paper.id]);
+      for (var i = 0; i < paper.authors.length; i++) {
+        final authorId = await _insertOrGetAuthor(txn, paper.authors[i]);
+        await txn.insert('paper_authors', {
+          'paper_id': paper.id,
+          'author_id': authorId,
+          'position': i,
+        });
+      }
+
+      await txn.delete('paper_tags',
+          where: 'paper_id = ?', whereArgs: [paper.id]);
+      for (final tagName in paper.tags) {
+        final tagId = await _insertOrGetTag(txn, tagName);
+        await txn.insert('paper_tags', {
+          'paper_id': paper.id,
+          'tag_id': tagId,
+        });
+      }
+    });
+  }
+
   Future<int> _insertOrGetAuthor(Transaction txn, AuthorModel author) async {
+    // given_name may be null; SQL `= NULL` never matches, so branch on it.
+    final hasGivenName = author.givenName != null;
     final existing = await txn.query(
       'authors',
-      where: 'family_name = ? AND given_name = ?',
-      whereArgs: [author.familyName, author.givenName],
+      where: hasGivenName
+          ? 'family_name = ? AND given_name = ?'
+          : 'family_name = ? AND given_name IS NULL',
+      whereArgs: [
+        author.familyName,
+        if (hasGivenName) author.givenName,
+      ],
     );
     if (existing.isNotEmpty) {
       return existing.first['id'] as int;
@@ -145,13 +187,16 @@ class PaperDao {
   }
 
   Future<List<PaperModel>> searchPapers(String query) async {
+    final ftsQuery = _toFtsQuery(query);
+    if (ftsQuery.isEmpty) return [];
+
     final db = await _db;
     final rows = await db.rawQuery('''
       SELECT p.* FROM papers p
       INNER JOIN papers_fts fts ON p.id = fts.rowid
       WHERE papers_fts MATCH ?
       ORDER BY rank
-    ''', [query]);
+    ''', [ftsQuery]);
 
     final papers = <PaperModel>[];
     for (final row in rows) {
@@ -161,5 +206,19 @@ class PaperDao {
       papers.add(paper.copyWith(authors: authors, tags: tags));
     }
     return papers;
+  }
+
+  /// Converts free-form user input into a safe FTS5 MATCH expression:
+  /// each term is quoted (so `:`, `-`, `"` etc. can't break the query
+  /// syntax) and the last term matches as a prefix for search-as-you-type.
+  String _toFtsQuery(String query) {
+    final terms = query
+        .split(RegExp(r'\s+'))
+        .where((t) => t.isNotEmpty)
+        .map((t) => '"${t.replaceAll('"', '""')}"')
+        .toList();
+    if (terms.isEmpty) return '';
+    terms[terms.length - 1] = '${terms.last}*';
+    return terms.join(' ');
   }
 }

@@ -117,6 +117,17 @@ class CollectionDao {
     return rows.map((r) => r['paper_id'] as int).toList();
   }
 
+  Future<Set<int>> getCollectionIdsForPaper(int paperId) async {
+    final db = await _db;
+    final rows = await db.query(
+      'paper_collections',
+      columns: ['collection_id'],
+      where: 'paper_id = ?',
+      whereArgs: [paperId],
+    );
+    return rows.map((r) => r['collection_id'] as int).toSet();
+  }
+
   Future<List<String>> getAllTagNames() async {
     final db = await _db;
     final rows = await db.query('tags', orderBy: 'name ASC');

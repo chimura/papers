@@ -6,7 +6,10 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/models/paper_model.dart';
 import '../../citations/screens/citation_screen.dart';
 import '../../reader/screens/reader_screen.dart';
+import '../../settings/providers/settings_provider.dart';
 import '../providers/library_provider.dart';
+import '../widgets/collections_dialog.dart';
+import '../widgets/edit_paper_dialog.dart';
 
 class PaperDetailScreen extends ConsumerWidget {
   final PaperModel paper;
@@ -17,6 +20,16 @@ class PaperDetailScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
 
+    // Resolve the live version of this paper so favorite toggles and edits
+    // are reflected immediately; fall back to the snapshot we were given.
+    final fresh = ref
+            .watch(libraryProvider)
+            .value
+            ?.where((p) => p.id == this.paper.id)
+            .firstOrNull ??
+        this.paper;
+    final paper = fresh;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Paper Details'),
@@ -26,6 +39,8 @@ class PaperDetailScreen extends ConsumerWidget {
               paper.isFavorite ? Icons.star : Icons.star_border,
               color: paper.isFavorite ? Colors.amber : null,
             ),
+            tooltip:
+                paper.isFavorite ? 'Remove from favorites' : 'Add to favorites',
             onPressed: () {
               if (paper.id != null) {
                 ref
@@ -34,8 +49,13 @@ class PaperDetailScreen extends ConsumerWidget {
               }
             },
           ),
+          IconButton(
+            icon: const Icon(Icons.edit_outlined),
+            tooltip: 'Edit details',
+            onPressed: () => showEditPaperDialog(context, paper),
+          ),
           PopupMenuButton<String>(
-            onSelected: (action) => _handleAction(context, ref, action),
+            onSelected: (action) => _handleAction(context, ref, paper, action),
             itemBuilder: (context) => [
               if (paper.localPdfPath != null)
                 const PopupMenuItem(
@@ -46,6 +66,14 @@ class PaperDetailScreen extends ConsumerWidget {
                     contentPadding: EdgeInsets.zero,
                   ),
                 ),
+              const PopupMenuItem(
+                value: 'collections',
+                child: ListTile(
+                  leading: Icon(Icons.folder_outlined),
+                  title: Text('Collections...'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
               if (paper.doi != null)
                 const PopupMenuItem(
                   value: 'copy_doi',
@@ -201,12 +229,17 @@ class PaperDetailScreen extends ConsumerWidget {
     );
   }
 
-  void _handleAction(BuildContext context, WidgetRef ref, String action) {
+  void _handleAction(
+      BuildContext context, WidgetRef ref, PaperModel paper, String action) {
     switch (action) {
       case 'open_pdf':
         Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => ReaderScreen(paper: paper)),
         );
+      case 'collections':
+        if (paper.id != null) {
+          showCollectionsDialog(context, paper.id!);
+        }
       case 'cite':
         Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => CitationScreen(paper: paper)),
@@ -219,28 +252,31 @@ class PaperDetailScreen extends ConsumerWidget {
           );
         }
       case 'delete':
-        _confirmDelete(context, ref);
+        final confirm =
+            ref.read(settingsProvider).value?.confirmBeforeDelete ?? true;
+        if (confirm) {
+          _confirmDelete(context, ref, paper);
+        } else {
+          _deletePaper(context, ref, paper);
+        }
     }
   }
 
-  void _confirmDelete(BuildContext context, WidgetRef ref) {
+  void _confirmDelete(BuildContext context, WidgetRef ref, PaperModel paper) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Delete paper?'),
         content: const Text('This will remove the paper from your library.'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Cancel'),
           ),
           FilledButton(
             onPressed: () {
-              if (paper.id != null) {
-                ref.read(libraryProvider.notifier).deletePaper(paper.id!);
-              }
-              Navigator.pop(context); // close dialog
-              Navigator.pop(context); // go back to library
+              Navigator.pop(dialogContext);
+              _deletePaper(context, ref, paper);
             },
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(context).colorScheme.error,
@@ -250,6 +286,20 @@ class PaperDetailScreen extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  /// Deletes the paper and leaves the detail view — by popping when this
+  /// screen was pushed as a page, or by clearing the master-detail selection
+  /// when it is embedded in the wide layout.
+  void _deletePaper(BuildContext context, WidgetRef ref, PaperModel paper) {
+    if (paper.id != null) {
+      ref.read(libraryProvider.notifier).deletePaper(paper.id!);
+    }
+    ref.read(selectedPaperProvider.notifier).select(null);
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.pop();
+    }
   }
 
   Future<void> _openDoi(String doi) async {

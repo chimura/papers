@@ -49,7 +49,7 @@ class SettingsScreen extends ConsumerWidget {
 
           // ── Account ──
           _SectionHeader('Account'),
-          if (user != null) ...[
+          if (user != null && !user.isAnonymous) ...[
             ListTile(
               leading: CircleAvatar(
                 backgroundImage:
@@ -62,11 +62,17 @@ class SettingsScreen extends ConsumerWidget {
               subtitle: Text(user.email ?? ''),
             ),
           ] else ...[
+            if (user != null)
+              const ListTile(
+                leading: Icon(Icons.person_outline),
+                title: Text('Local session'),
+                subtitle: Text('Your library is stored only on this device'),
+              ),
             ListTile(
               leading: const Icon(Icons.login),
               title: const Text('Sign in with Google'),
               subtitle: const Text('Required for Google Drive backup'),
-              onTap: () => GoogleAuthService().signInWithGoogle(),
+              onTap: () => _signInWithGoogle(context),
             ),
           ],
 
@@ -74,7 +80,11 @@ class SettingsScreen extends ConsumerWidget {
 
           // ── Sync ──
           _SectionHeader('Google Drive Sync'),
-          _SyncTile(syncState: syncState, ref: ref),
+          _SyncTile(
+            syncState: syncState,
+            ref: ref,
+            canSync: user != null && !user.isAnonymous,
+          ),
           SwitchListTile(
             secondary: const Icon(Icons.sync),
             title: const Text('Auto-sync'),
@@ -178,6 +188,18 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
+  Future<void> _signInWithGoogle(BuildContext context) async {
+    try {
+      await GoogleAuthService().signInWithGoogle();
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Sign-in failed: $e')),
+        );
+      }
+    }
+  }
+
   void _confirmSignOut(BuildContext context) {
     showDialog(
       context: context,
@@ -247,8 +269,13 @@ class _SectionHeader extends StatelessWidget {
 class _SyncTile extends StatelessWidget {
   final SyncState syncState;
   final WidgetRef ref;
+  final bool canSync;
 
-  const _SyncTile({required this.syncState, required this.ref});
+  const _SyncTile({
+    required this.syncState,
+    required this.ref,
+    required this.canSync,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -266,9 +293,11 @@ class _SyncTile extends StatelessWidget {
                 )
               : const Icon(Icons.cloud_sync_outlined),
           title: const Text('Google Drive Sync'),
-          subtitle: Text(_syncSubtitle),
+          subtitle: Text(canSync
+              ? _syncSubtitle
+              : 'Sign in with Google above to enable sync'),
           trailing: FilledButton.tonal(
-            onPressed: isSyncing
+            onPressed: isSyncing || !canSync
                 ? null
                 : () => ref.read(syncStateProvider.notifier).sync(),
             child: Text(isSyncing ? 'Syncing...' : 'Sync now'),

@@ -250,7 +250,24 @@ class _BibtexTab extends ConsumerWidget {
                 child: Text(importState.error!),
               ),
             ),
-          if (importState.papers.isNotEmpty)
+          if (importState.papers.isNotEmpty) ...[
+            Row(
+              children: [
+                Text(
+                  '${importState.papers.length} '
+                  '${importState.papers.length == 1 ? 'entry' : 'entries'} found',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const Spacer(),
+                if (importState.papers.length > 1)
+                  FilledButton.tonalIcon(
+                    onPressed: () => _importAll(context, ref),
+                    icon: const Icon(Icons.playlist_add, size: 18),
+                    label: Text('Add all (${importState.papers.length})'),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
             Expanded(
               flex: 3,
               child: ListView.builder(
@@ -264,6 +281,7 @@ class _BibtexTab extends ConsumerWidget {
                 },
               ),
             ),
+          ],
         ],
       ),
     );
@@ -276,6 +294,19 @@ class _BibtexTab extends ConsumerWidget {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Added: ${paper.title}')),
       );
+    }
+  }
+
+  Future<void> _importAll(BuildContext context, WidgetRef ref) async {
+    final papers = ref.read(bibtexImportProvider).papers;
+    for (final paper in papers) {
+      await ref.read(libraryProvider.notifier).addPaper(paper);
+    }
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${papers.length} papers added to library')),
+      );
+      Navigator.of(context).pop();
     }
   }
 }

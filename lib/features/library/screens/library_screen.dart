@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/auth/auth_provider.dart';
+import '../../../core/drive/drive_provider.dart';
+import '../../../core/drive/drive_sync_service.dart';
 import '../../../core/models/paper_model.dart';
 import '../../../core/router/app_router.dart';
 import '../../import/screens/import_screen.dart';
 import '../models/library_filter.dart';
+import '../providers/collection_providers.dart';
 import '../providers/library_filter_provider.dart';
 import '../providers/library_provider.dart';
 import '../providers/library_search_provider.dart';
@@ -13,19 +17,6 @@ import '../widgets/filter_drawer.dart';
 import '../widgets/paper_grid_tile.dart';
 import '../widgets/paper_list_tile.dart';
 import 'paper_detail_screen.dart';
-
-/// Provider to track selected paper for master-detail on wide screens.
-final selectedPaperProvider =
-    NotifierProvider<SelectedPaperNotifier, PaperModel?>(
-  SelectedPaperNotifier.new,
-);
-
-class SelectedPaperNotifier extends Notifier<PaperModel?> {
-  @override
-  PaperModel? build() => null;
-
-  void select(PaperModel? paper) => state = paper;
-}
 
 class LibraryScreen extends ConsumerStatefulWidget {
   const LibraryScreen({super.key});
@@ -68,6 +59,24 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     final isWide = MediaQuery.sizeOf(context).width >= kDesktopBreakpoint;
     final selectedPaper = ref.watch(selectedPaperProvider);
 
+    // Notify when a sync finishes.
+    ref.listen(syncStateProvider, (previous, next) {
+      if (previous?.status != SyncStatus.syncing) return;
+      final messenger = ScaffoldMessenger.of(context);
+      if (next.status == SyncStatus.success) {
+        messenger.showSnackBar(SnackBar(
+          content: Text(
+              'Sync complete — ${next.uploadedCount} uploaded, ${next.downloadedCount} downloaded'),
+        ));
+        ref.read(libraryProvider.notifier).refresh();
+      } else if (next.status == SyncStatus.error) {
+        messenger.showSnackBar(SnackBar(
+          content: Text('Sync failed: ${next.message ?? 'unknown error'}'),
+          backgroundColor: theme.colorScheme.error,
+        ));
+      }
+    });
+
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         const SingleActivator(LogicalKeyboardKey.keyF, control: true): _toggleSearch,
@@ -99,11 +108,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                   )
                 : const Text('Library'),
             actions: [
+              _SyncButton(),
               IconButton(
                 icon: Icon(_isSearching ? Icons.close : Icons.search),
                 tooltip: _isSearching ? 'Close search' : 'Search (Ctrl+F)',
                 onPressed: _toggleSearch,
               ),
+              _buildSortMenu(filter),
               Builder(
                 builder: (context) => IconButton(
                   icon: Badge(
@@ -132,6 +143,40 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     );
   }
 
+  Widget _buildSortMenu(LibraryFilter filter) {
+    return PopupMenuButton<Object>(
+      icon: const Icon(Icons.sort),
+      tooltip: 'Sort by',
+      onSelected: (value) {
+        final notifier = ref.read(libraryFilterProvider.notifier);
+        if (value is SortOption) {
+          notifier.setSortBy(value);
+        } else if (value == 'direction') {
+          notifier.toggleSortDirection();
+        }
+      },
+      itemBuilder: (context) => [
+        for (final option in SortOption.values)
+          CheckedPopupMenuItem(
+            value: option,
+            checked: filter.sortBy == option,
+            child: Text(option.label),
+          ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: 'direction',
+          child: ListTile(
+            leading: Icon(filter.sortDescending
+                ? Icons.arrow_downward
+                : Icons.arrow_upward),
+            title: Text(filter.sortDescending ? 'Descending' : 'Ascending'),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+      ],
+    );
+  }
+
   void _openImport(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const ImportScreen()),
@@ -142,7 +187,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
   Widget _buildWideLayout(
     ThemeData theme,
-    AsyncValue<dynamic> libraryState,
+    AsyncValue<List<PaperModel>> libraryState,
     LibraryFilter filter,
     PaperModel? selectedPaper,
   ) {
@@ -186,7 +231,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
   Widget _buildNarrowLayout(
     ThemeData theme,
-    AsyncValue<dynamic> libraryState,
+    AsyncValue<List<PaperModel>> libraryState,
     LibraryFilter filter, {
     int? selectedPaperId,
   }) {
@@ -212,7 +257,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         ),
       ),
       data: (allPapers) {
-        var papers = _applyFilters(allPapers, filter);
+        final papers = _applyFilters(allPapers, filter);
 
         if (papers.isEmpty) {
           return _buildEmptyState(theme, filter);
@@ -306,6 +351,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   // ── Helpers ──
 
   void _onPaperTap(BuildContext context, PaperModel paper) {
+    // A tapped search result should open the paper, not select it invisibly
+    // behind the results view — leave search mode first.
+    if (_isSearching) _toggleSearch();
+
     final isWide = MediaQuery.sizeOf(context).width >= kDesktopBreakpoint;
     if (isWide) {
       ref.read(selectedPaperProvider.notifier).select(paper);
@@ -362,13 +411,27 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                   .withValues(alpha: 0.7),
             ),
           ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: () => _openImport(context),
+            icon: const Icon(Icons.add),
+            label: const Text('Import a paper'),
+          ),
         ],
       ),
     );
   }
 
-  List<dynamic> _applyFilters(List<dynamic> papers, LibraryFilter filter) {
+  List<PaperModel> _applyFilters(List<PaperModel> papers, LibraryFilter filter) {
     var result = papers.toList();
+
+    if (filter.collectionId != null) {
+      final memberIds = ref
+              .watch(collectionPaperIdsProvider(filter.collectionId!))
+              .value ??
+          const <int>{};
+      result = result.where((p) => memberIds.contains(p.id)).toList();
+    }
 
     if (filter.favoritesOnly) {
       result = result.where((p) => p.isFavorite).toList();
@@ -410,5 +473,39 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     });
 
     return result;
+  }
+}
+
+/// Sync button for the app bar: spins while syncing, disabled with an
+/// explanatory tooltip when the user has no Google session.
+class _SyncButton extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final syncState = ref.watch(syncStateProvider);
+    final user = ref.watch(authStateProvider).value;
+    final canSync = user != null && !user.isAnonymous;
+    final isSyncing = syncState.status == SyncStatus.syncing;
+
+    if (isSyncing) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 12),
+        child: Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+
+    return IconButton(
+      icon: const Icon(Icons.cloud_sync_outlined),
+      tooltip: canSync
+          ? 'Sync with Google Drive'
+          : 'Sign in with Google (Settings) to sync',
+      onPressed:
+          canSync ? () => ref.read(syncStateProvider.notifier).sync() : null,
+    );
   }
 }

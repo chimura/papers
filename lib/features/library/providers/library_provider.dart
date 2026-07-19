@@ -8,6 +8,19 @@ final libraryProvider =
   LibraryNotifier.new,
 );
 
+/// Tracks the selected paper for the master-detail layout on wide screens.
+final selectedPaperProvider =
+    NotifierProvider<SelectedPaperNotifier, PaperModel?>(
+  SelectedPaperNotifier.new,
+);
+
+class SelectedPaperNotifier extends Notifier<PaperModel?> {
+  @override
+  PaperModel? build() => null;
+
+  void select(PaperModel? paper) => state = paper;
+}
+
 class LibraryNotifier extends AsyncNotifier<List<PaperModel>> {
   @override
   Future<List<PaperModel>> build() async {
@@ -26,6 +39,12 @@ class LibraryNotifier extends AsyncNotifier<List<PaperModel>> {
     final id = await dao.insertPaper(paper);
     await refresh();
     return id;
+  }
+
+  Future<void> updatePaperDetails(PaperModel paper) async {
+    final dao = ref.read(paperDaoProvider);
+    await dao.updatePaperWithRelations(paper);
+    await refresh();
   }
 
   Future<void> deletePaper(int id) async {
