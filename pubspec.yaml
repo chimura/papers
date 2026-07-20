@@ -45,6 +45,7 @@ dependencies:
   url_launcher:
   share_plus:
   file_picker:
+  desktop_drop:
   intl:
   connectivity_plus:
   shared_preferences: ^2.5.4

@@ -57,6 +57,11 @@ class SettingsNotifier extends AsyncNotifier<AppSettings> {
     await _save(current.copyWith(confirmBeforeDelete: confirm));
   }
 
+  Future<void> setPdfDarkMode(bool enabled) async {
+    final current = state.value ?? const AppSettings();
+    await _save(current.copyWith(pdfDarkMode: enabled));
+  }
+
   Future<void> resetToDefaults() async {
     await _save(const AppSettings());
   }

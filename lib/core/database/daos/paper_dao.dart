@@ -39,6 +39,16 @@ class PaperDao {
     });
   }
 
+  /// Reading position is owned exclusively by [updateReadingPosition]; a
+  /// caller holding a stale model must never roll it back.
+  static Map<String, dynamic> _withoutReadingPosition(PaperModel paper) {
+    return paper.toMap()
+      ..remove('last_read_page')
+      ..remove('last_read_zoom')
+      ..remove('last_read_at')
+      ..remove('total_pages');
+  }
+
   /// Updates the paper row and rewrites its author/tag relations to match
   /// [paper]. Use this instead of [updatePaper] when authors or tags changed.
   Future<void> updatePaperWithRelations(PaperModel paper) async {
@@ -46,7 +56,7 @@ class PaperDao {
     await db.transaction((txn) async {
       await txn.update(
         'papers',
-        paper.toMap(),
+        _withoutReadingPosition(paper),
         where: 'id = ?',
         whereArgs: [paper.id],
       );
@@ -165,7 +175,7 @@ class PaperDao {
     final db = await _db;
     return db.update(
       'papers',
-      paper.toMap(),
+      _withoutReadingPosition(paper),
       where: 'id = ?',
       whereArgs: [paper.id],
     );
@@ -174,6 +184,48 @@ class PaperDao {
   Future<int> deletePaper(int id) async {
     final db = await _db;
     return db.delete('papers', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Persists where the user left off in the PDF; called from the reader.
+  Future<void> updateReadingPosition(
+    int id, {
+    required int page,
+    double? zoom,
+    int? totalPages,
+  }) async {
+    final db = await _db;
+    await db.rawUpdate('''
+      UPDATE papers SET
+        last_read_page = ?,
+        last_read_zoom = COALESCE(?, last_read_zoom),
+        last_read_at = ?,
+        total_pages = COALESCE(?, total_pages)
+      WHERE id = ?
+    ''', [page, zoom, DateTime.now().toIso8601String(), totalPages, id]);
+  }
+
+  Future<Set<String>> getAllBibtexKeys() async {
+    final db = await _db;
+    final rows = await db.query('papers',
+        columns: ['bibtex_key'], where: 'bibtex_key IS NOT NULL');
+    return rows.map((r) => r['bibtex_key'] as String).toSet();
+  }
+
+  Future<void> setBibtexKey(int id, String key, {required bool pinned}) async {
+    final db = await _db;
+    await db.update(
+      'papers',
+      {'bibtex_key': key, 'bibtex_key_pinned': pinned ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<List<PaperModel>> getPapersWithDoiWithoutPdf() async {
+    final db = await _db;
+    final rows = await db.query('papers',
+        where: 'doi IS NOT NULL AND local_pdf_path IS NULL');
+    return rows.map(PaperModel.fromMap).toList();
   }
 
   Future<void> toggleFavorite(int id, bool isFavorite) async {

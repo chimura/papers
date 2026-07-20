@@ -154,6 +154,65 @@ void main() {
     expect(await collectionDao.getCollectionIdsForPaper(paperId), isEmpty);
   });
 
+  group('reading position and citation keys', () {
+    test('updateReadingPosition persists page, timestamp, totals', () async {
+      final id = await dao.insertPaper(_paper());
+      await dao.updateReadingPosition(id, page: 12, totalPages: 30);
+
+      final paper = (await dao.getPaperById(id))!;
+      expect(paper.lastReadPage, 12);
+      expect(paper.totalPages, 30);
+      expect(paper.lastReadAt, isNotNull);
+
+      // A later save without totals keeps the known total.
+      await dao.updateReadingPosition(id, page: 15);
+      final again = (await dao.getPaperById(id))!;
+      expect(again.lastReadPage, 15);
+      expect(again.totalPages, 30);
+    });
+
+    test('a stale model cannot roll back reading position', () async {
+      final id = await dao.insertPaper(_paper(title: 'Long read'));
+      final stale = (await dao.getPaperById(id))!; // captured before reading
+
+      await dao.updateReadingPosition(id, page: 42, totalPages: 100);
+
+      // Both update paths must leave the newer position intact.
+      await dao.updatePaper(stale.copyWith(title: 'Renamed'));
+      await dao.updatePaperWithRelations(stale.copyWith(tags: const ['x']));
+
+      final after = (await dao.getPaperById(id))!;
+      expect(after.lastReadPage, 42);
+      expect(after.totalPages, 100);
+      expect(after.tags, ['x']);
+    });
+
+    test('bibtex key set/query round-trip', () async {
+      final id1 = await dao.insertPaper(_paper(title: 'One'));
+      final id2 = await dao.insertPaper(_paper(title: 'Two'));
+
+      await dao.setBibtexKey(id1, 'smith2020alpha', pinned: false);
+      await dao.setBibtexKey(id2, 'jones2021beta', pinned: true);
+
+      expect(await dao.getAllBibtexKeys(),
+          {'smith2020alpha', 'jones2021beta'});
+      expect((await dao.getPaperById(id2))!.bibtexKeyPinned, isTrue);
+    });
+
+    test('getPapersWithDoiWithoutPdf filters correctly', () async {
+      await dao.insertPaper(_paper(title: 'No doi'));
+      final wanted =
+          await dao.insertPaper(_paper(title: 'Wanted', doi: '10.1/a'));
+      final withPdf = _paper(title: 'Has pdf', doi: '10.1/b');
+      final withPdfId = await dao.insertPaper(withPdf);
+      await dao.updatePaper((await dao.getPaperById(withPdfId))!
+          .copyWith(localPdfPath: 'C:/x.pdf'));
+
+      final result = await dao.getPapersWithDoiWithoutPdf();
+      expect(result.map((paper) => paper.id), [wanted]);
+    });
+  });
+
   group('full-text search', () {
     test('matches title words and last-term prefix', () async {
       await dao.insertPaper(_paper(title: 'Quantum Error Correction'));

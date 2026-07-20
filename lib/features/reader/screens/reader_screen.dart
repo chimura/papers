@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -5,14 +6,25 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pdfrx/pdfrx.dart';
 
+import '../../../core/database/database_provider.dart';
 import '../../../core/models/paper_model.dart';
 import '../../../core/router/app_router.dart';
+import '../../citations/services/citation_clipboard.dart';
+import '../../settings/providers/settings_provider.dart';
 import '../models/annotation_model.dart';
 import '../providers/annotation_provider.dart';
 import '../providers/reader_provider.dart';
 import '../widgets/annotation_toolbar.dart';
 import '../widgets/highlight_overlay.dart';
 import '../widgets/note_panel.dart';
+
+/// Color-inverts the rendered PDF for night reading.
+const _invertMatrix = <double>[
+  -1, 0, 0, 0, 255, //
+  0, -1, 0, 0, 255, //
+  0, 0, -1, 0, 255, //
+  0, 0, 0, 1, 0, //
+];
 
 class ReaderScreen extends ConsumerStatefulWidget {
   final PaperModel paper;
@@ -28,10 +40,36 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   PdfTextSelection? _lastTextSelection;
   bool _showSidePanel = true;
 
+  Timer? _positionSaveTimer;
+  int? _pendingPage;
+
   @override
   void dispose() {
+    _positionSaveTimer?.cancel();
+    _flushReadingPosition();
     ref.read(readerStateProvider.notifier).reset();
     super.dispose();
+  }
+
+  void _scheduleReadingPositionSave(int pageNumber) {
+    _pendingPage = pageNumber;
+    _positionSaveTimer?.cancel();
+    _positionSaveTimer =
+        Timer(const Duration(seconds: 2), _flushReadingPosition);
+  }
+
+  void _flushReadingPosition() {
+    final paperId = widget.paper.id;
+    final page = _pendingPage;
+    if (paperId == null || page == null) return;
+    _pendingPage = null;
+
+    final totalPages = ref.read(readerStateProvider).totalPages;
+    ref.read(paperDaoProvider).updateReadingPosition(
+          paperId,
+          page: page,
+          totalPages: totalPages > 0 ? totalPages : null,
+        );
   }
 
   @override
@@ -42,6 +80,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         : null;
     final annotations = annotationsAsync?.value ?? [];
     final isWide = MediaQuery.sizeOf(context).width >= kDesktopBreakpoint;
+    final pdfDarkMode =
+        ref.watch(settingsProvider).value?.pdfDarkMode ?? false;
 
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
@@ -55,6 +95,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             ref.read(readerStateProvider.notifier).setTool(ReaderTool.note),
         const SingleActivator(LogicalKeyboardKey.escape): () =>
             ref.read(readerStateProvider.notifier).setTool(ReaderTool.none),
+        const SingleActivator(LogicalKeyboardKey.keyC,
+                control: true, shift: true):
+            () => copyFormattedCitation(ref, context, widget.paper),
+        const SingleActivator(LogicalKeyboardKey.keyB,
+                control: true, shift: true):
+            () => copyBibtexEntry(ref, context, widget.paper),
+        const SingleActivator(LogicalKeyboardKey.keyK,
+                control: true, shift: true):
+            () => copyCiteCommand(ref, context, widget.paper),
         if (isWide)
           const SingleActivator(LogicalKeyboardKey.keyB, control: true): () =>
               setState(() => _showSidePanel = !_showSidePanel),
@@ -72,6 +121,21 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
               overflow: TextOverflow.ellipsis,
             ),
             actions: [
+              IconButton(
+                icon: Icon(pdfDarkMode ? Icons.light_mode : Icons.dark_mode),
+                tooltip: pdfDarkMode
+                    ? 'Normal PDF colors'
+                    : 'Dark PDF (inverted colors)',
+                onPressed: () => ref
+                    .read(settingsProvider.notifier)
+                    .setPdfDarkMode(!pdfDarkMode),
+              ),
+              IconButton(
+                icon: const Icon(Icons.format_quote),
+                tooltip: 'Copy citation (Ctrl+Shift+C)',
+                onPressed: () =>
+                    copyFormattedCitation(ref, context, widget.paper),
+              ),
               if (isWide)
                 IconButton(
                   icon: Icon(
@@ -93,8 +157,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             children: [
               Expanded(
                 child: isWide
-                    ? _buildWideBody(readerState, annotations)
-                    : _buildPdfViewer(readerState, annotations),
+                    ? _buildWideBody(readerState, annotations, pdfDarkMode)
+                    : _buildPdfViewer(readerState, annotations, pdfDarkMode),
               ),
               const AnnotationToolbar(),
             ],
@@ -109,10 +173,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   Widget _buildWideBody(
     ReaderState readerState,
     List<AnnotationModel> annotations,
+    bool pdfDarkMode,
   ) {
     return Row(
       children: [
-        Expanded(child: _buildPdfViewer(readerState, annotations)),
+        Expanded(child: _buildPdfViewer(readerState, annotations, pdfDarkMode)),
         if (_showSidePanel) ...[
           const VerticalDivider(width: 1, thickness: 1),
           SizedBox(
@@ -141,6 +206,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   Widget _buildPdfViewer(
     ReaderState readerState,
     List<AnnotationModel> annotations,
+    bool pdfDarkMode,
   ) {
     final pdfPath = widget.paper.localPdfPath;
     if (pdfPath == null || !File(pdfPath).existsSync()) {
@@ -159,48 +225,64 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       );
     }
 
+    Widget viewer = PdfViewer.file(
+      pdfPath,
+      controller: _pdfController,
+      params: PdfViewerParams(
+        onViewerReady: (document, controller) {
+          ref
+              .read(readerStateProvider.notifier)
+              .setTotalPages(document.pages.length);
+          final resumePage = widget.paper.lastReadPage;
+          if (resumePage != null &&
+              resumePage > 1 &&
+              resumePage <= document.pages.length) {
+            controller.goToPage(pageNumber: resumePage);
+          }
+        },
+        onPageChanged: (pageNumber) {
+          ref.read(readerStateProvider.notifier).setPage((pageNumber ?? 1) - 1);
+          if (pageNumber != null) _scheduleReadingPositionSave(pageNumber);
+        },
+        textSelectionParams: PdfTextSelectionParams(
+          onTextSelectionChange: (textSelection) {
+            _lastTextSelection = textSelection;
+          },
+        ),
+        pageOverlaysBuilder: (context, pageRect, page) {
+          if (!readerState.showAnnotations) return [];
+
+          final pageAnnotations =
+              annotations.where((a) => a.page == page.pageNumber).toList();
+
+          if (pageAnnotations.isEmpty) return [];
+
+          return [
+            HighlightOverlay(
+              annotations: pageAnnotations,
+              pageSize: Size(page.width, page.height),
+              visible: readerState.showAnnotations,
+              // The overlay renders inside the inverted viewer, so its
+              // colors are pre-inverted to come out right.
+              invertColors: pdfDarkMode,
+              onAnnotationTap: (annotation) =>
+                  _onAnnotationTap(context, annotation),
+            ),
+          ];
+        },
+      ),
+    );
+
+    if (pdfDarkMode) {
+      viewer = ColorFiltered(
+        colorFilter: const ColorFilter.matrix(_invertMatrix),
+        child: viewer,
+      );
+    }
+
     return Stack(
       children: [
-        PdfViewer.file(
-          pdfPath,
-          controller: _pdfController,
-          params: PdfViewerParams(
-            onViewerReady: (document, controller) {
-              ref
-                  .read(readerStateProvider.notifier)
-                  .setTotalPages(document.pages.length);
-            },
-            onPageChanged: (pageNumber) {
-              ref
-                  .read(readerStateProvider.notifier)
-                  .setPage((pageNumber ?? 1) - 1);
-            },
-            textSelectionParams: PdfTextSelectionParams(
-              onTextSelectionChange: (textSelection) {
-                _lastTextSelection = textSelection;
-              },
-            ),
-            pageOverlaysBuilder: (context, pageRect, page) {
-              if (!readerState.showAnnotations) return [];
-
-              final pageAnnotations = annotations
-                  .where((a) => a.page == page.pageNumber)
-                  .toList();
-
-              if (pageAnnotations.isEmpty) return [];
-
-              return [
-                HighlightOverlay(
-                  annotations: pageAnnotations,
-                  pageSize: Size(page.width, page.height),
-                  visible: readerState.showAnnotations,
-                  onAnnotationTap: (annotation) =>
-                      _onAnnotationTap(context, annotation),
-                ),
-              ];
-            },
-          ),
-        ),
+        viewer,
 
         if (readerState.activeTool == ReaderTool.highlight)
           Positioned(

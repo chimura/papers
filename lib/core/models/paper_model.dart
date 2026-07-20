@@ -19,6 +19,11 @@ class PaperModel {
   final DateTime dateModified;
   final String? cslJson;
   final String? bibtexKey;
+  final bool bibtexKeyPinned;
+  final int? lastReadPage;
+  final double? lastReadZoom;
+  final DateTime? lastReadAt;
+  final int? totalPages;
   final List<AuthorModel> authors;
   final List<String> tags;
   final List<String> collections;
@@ -42,6 +47,11 @@ class PaperModel {
     required this.dateModified,
     this.cslJson,
     this.bibtexKey,
+    this.bibtexKeyPinned = false,
+    this.lastReadPage,
+    this.lastReadZoom,
+    this.lastReadAt,
+    this.totalPages,
     this.authors = const [],
     this.tags = const [],
     this.collections = const [],
@@ -66,6 +76,11 @@ class PaperModel {
     DateTime? dateModified,
     String? cslJson,
     String? bibtexKey,
+    bool? bibtexKeyPinned,
+    int? lastReadPage,
+    double? lastReadZoom,
+    DateTime? lastReadAt,
+    int? totalPages,
     List<AuthorModel>? authors,
     List<String>? tags,
     List<String>? collections,
@@ -89,6 +104,11 @@ class PaperModel {
       dateModified: dateModified ?? this.dateModified,
       cslJson: cslJson ?? this.cslJson,
       bibtexKey: bibtexKey ?? this.bibtexKey,
+      bibtexKeyPinned: bibtexKeyPinned ?? this.bibtexKeyPinned,
+      lastReadPage: lastReadPage ?? this.lastReadPage,
+      lastReadZoom: lastReadZoom ?? this.lastReadZoom,
+      lastReadAt: lastReadAt ?? this.lastReadAt,
+      totalPages: totalPages ?? this.totalPages,
       authors: authors ?? this.authors,
       tags: tags ?? this.tags,
       collections: collections ?? this.collections,
@@ -115,6 +135,11 @@ class PaperModel {
       'date_modified': dateModified.toIso8601String(),
       'csl_json': cslJson,
       'bibtex_key': bibtexKey,
+      'bibtex_key_pinned': bibtexKeyPinned ? 1 : 0,
+      'last_read_page': lastReadPage,
+      'last_read_zoom': lastReadZoom,
+      'last_read_at': lastReadAt?.toIso8601String(),
+      'total_pages': totalPages,
     };
   }
 
@@ -138,6 +163,13 @@ class PaperModel {
       dateModified: DateTime.parse(map['date_modified'] as String),
       cslJson: map['csl_json'] as String?,
       bibtexKey: map['bibtex_key'] as String?,
+      bibtexKeyPinned: (map['bibtex_key_pinned'] as int?) == 1,
+      lastReadPage: map['last_read_page'] as int?,
+      lastReadZoom: (map['last_read_zoom'] as num?)?.toDouble(),
+      lastReadAt: map['last_read_at'] != null
+          ? DateTime.parse(map['last_read_at'] as String)
+          : null,
+      totalPages: map['total_pages'] as int?,
     );
   }
 

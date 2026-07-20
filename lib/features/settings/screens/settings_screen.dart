@@ -1,10 +1,22 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 
 import '../../../core/auth/auth_provider.dart';
 import '../../../core/auth/google_auth_service.dart';
+import '../../../core/database/database_provider.dart';
 import '../../../core/drive/drive_provider.dart';
 import '../../../core/drive/drive_sync_service.dart';
+import '../../citations/services/citation_clipboard.dart';
+import '../../citations/services/export_service.dart';
+import '../../enrichment/services/unpaywall_service.dart';
+import '../../import/services/file_import_service.dart';
+import '../../library/providers/library_provider.dart';
+import '../../reader/models/annotation_model.dart';
+import '../../reader/providers/annotation_provider.dart';
 import '../models/app_settings.dart';
 import '../providers/settings_provider.dart';
 
@@ -157,6 +169,20 @@ class SettingsScreen extends ConsumerWidget {
                 .read(settingsProvider.notifier)
                 .setConfirmBeforeDelete(value),
           ),
+          ListTile(
+            leading: const Icon(Icons.download_outlined),
+            title: const Text('Find open-access PDFs'),
+            subtitle: const Text(
+                'Look up free PDFs (Unpaywall) for papers without a file'),
+            onTap: () => _findOpenAccessPdfs(context, ref),
+          ),
+          ListTile(
+            leading: const Icon(Icons.notes_outlined),
+            title: const Text('Export annotation summaries'),
+            subtitle: const Text(
+                'One Markdown file per annotated paper (Obsidian-ready)'),
+            onTap: () => _exportAnnotationSummaries(context, ref),
+          ),
 
           const Divider(),
 
@@ -186,6 +212,82 @@ class SettingsScreen extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _findOpenAccessPdfs(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final dao = ref.read(paperDaoProvider);
+    final candidates = await dao.getPapersWithDoiWithoutPdf();
+
+    if (candidates.isEmpty) {
+      messenger.showSnackBar(const SnackBar(
+          content: Text('All papers with a DOI already have a PDF')));
+      return;
+    }
+
+    messenger.showSnackBar(SnackBar(
+        content:
+            Text('Searching open-access PDFs for ${candidates.length} papers...')));
+
+    final service = UnpaywallService();
+    final pdfsDir = await FileImportService().pdfsDirectory();
+    var found = 0;
+
+    for (final paper in candidates) {
+      final safeName = (paper.bibtexKey ?? 'paper_${paper.id}')
+          .replaceAll(RegExp(r'[^\w\-]'), '_');
+      final savePath = p.join(pdfsDir.path, '$safeName.pdf');
+      final ok = await service.fetchOaPdf(doi: paper.doi!, savePath: savePath);
+      if (ok) {
+        await dao.updatePaper(paper.copyWith(localPdfPath: savePath));
+        found++;
+      }
+    }
+
+    await ref.read(libraryProvider.notifier).refresh();
+    messenger.showSnackBar(SnackBar(
+        content: Text(
+            'Found PDFs for $found of ${candidates.length} papers')));
+  }
+
+  Future<void> _exportAnnotationSummaries(
+      BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final dirPath = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Export annotation summaries to...',
+    );
+    if (dirPath == null) return;
+
+    final papers = ref.read(libraryProvider).value ??
+        await ref.read(paperDaoProvider).getAllPapers();
+    final annotationDao = ref.read(annotationDaoProvider);
+    final exportService = ExportService();
+    final style = citationStyleFor(
+        ref.read(settingsProvider).value?.defaultCitationStyle ??
+            DefaultCitationStyle.apa);
+
+    var exported = 0;
+    for (final paper in papers) {
+      if (paper.id == null) continue;
+      final records = await annotationDao.getForPaper(paper.id!);
+      if (records.isEmpty) continue;
+
+      final annotations = records.map(AnnotationModel.fromRecord).toList();
+      final markdown = exportService.toMarkdownSummary(
+        paper,
+        annotations,
+        formattedCitation: style.format(paper),
+      );
+      final safeName = (paper.bibtexKey ?? 'paper_${paper.id}')
+          .replaceAll(RegExp(r'[^\w\-]'), '_');
+      await File(p.join(dirPath, '$safeName.md')).writeAsString(markdown);
+      exported++;
+    }
+
+    messenger.showSnackBar(SnackBar(
+        content: Text(exported == 0
+            ? 'No papers with annotations to export'
+            : 'Exported $exported annotation summaries')));
   }
 
   Future<void> _signInWithGoogle(BuildContext context) async {

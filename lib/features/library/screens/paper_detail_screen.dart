@@ -1,11 +1,23 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/database/database_provider.dart';
 import '../../../core/models/paper_model.dart';
 import '../../citations/screens/citation_screen.dart';
+import '../../citations/services/citation_clipboard.dart';
+import '../../citations/services/export_service.dart';
+import '../../enrichment/services/unpaywall_service.dart';
+import '../../import/services/file_import_service.dart';
+import '../../reader/models/annotation_model.dart';
+import '../../reader/providers/annotation_provider.dart';
 import '../../reader/screens/reader_screen.dart';
+import '../../settings/models/app_settings.dart';
 import '../../settings/providers/settings_provider.dart';
 import '../providers/library_provider.dart';
 import '../widgets/collections_dialog.dart';
@@ -66,11 +78,36 @@ class PaperDetailScreen extends ConsumerWidget {
                     contentPadding: EdgeInsets.zero,
                   ),
                 ),
+              if (paper.doi != null && paper.localPdfPath == null)
+                const PopupMenuItem(
+                  value: 'find_oa_pdf',
+                  child: ListTile(
+                    leading: Icon(Icons.download_outlined),
+                    title: Text('Find open-access PDF'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
               const PopupMenuItem(
                 value: 'collections',
                 child: ListTile(
                   leading: Icon(Icons.folder_outlined),
                   title: Text('Collections...'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'copy_markdown',
+                child: ListTile(
+                  leading: Icon(Icons.notes_outlined),
+                  title: Text('Copy notes as Markdown'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'save_markdown',
+                child: ListTile(
+                  leading: Icon(Icons.save_alt),
+                  title: Text('Save notes (.md)'),
                   contentPadding: EdgeInsets.zero,
                 ),
               ),
@@ -206,18 +243,20 @@ class PaperDetailScreen extends ConsumerWidget {
       ),
       floatingActionButton: paper.localPdfPath != null
           ? FloatingActionButton.extended(
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => ReaderScreen(paper: paper),
-                  ),
-                );
-              },
+              onPressed: () => _openReader(context, ref, paper),
               icon: const Icon(Icons.menu_book),
               label: const Text('Read'),
             )
           : null,
     );
+  }
+
+  /// Opens the reader and refreshes the library on return so reading
+  /// progress shows up immediately.
+  void _openReader(BuildContext context, WidgetRef ref, PaperModel paper) {
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => ReaderScreen(paper: paper)))
+        .then((_) => ref.read(libraryProvider.notifier).refresh());
   }
 
   Widget _chip(ThemeData theme, IconData icon, String label) {
@@ -233,9 +272,13 @@ class PaperDetailScreen extends ConsumerWidget {
       BuildContext context, WidgetRef ref, PaperModel paper, String action) {
     switch (action) {
       case 'open_pdf':
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => ReaderScreen(paper: paper)),
-        );
+        _openReader(context, ref, paper);
+      case 'find_oa_pdf':
+        _findOaPdf(context, ref, paper);
+      case 'copy_markdown':
+        _copyMarkdownSummary(context, ref, paper);
+      case 'save_markdown':
+        _saveMarkdownSummary(context, ref, paper);
       case 'collections':
         if (paper.id != null) {
           showCollectionsDialog(context, paper.id!);
@@ -300,6 +343,80 @@ class PaperDetailScreen extends ConsumerWidget {
     if (navigator.canPop()) {
       navigator.pop();
     }
+  }
+
+  Future<void> _findOaPdf(
+      BuildContext context, WidgetRef ref, PaperModel paper) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+        const SnackBar(content: Text('Searching Unpaywall...')));
+
+    final pdfsDir = await FileImportService().pdfsDirectory();
+    final safeName = (paper.bibtexKey ?? 'paper_${paper.id}')
+        .replaceAll(RegExp(r'[^\w\-]'), '_');
+    final savePath = p.join(pdfsDir.path, '$safeName.pdf');
+
+    final ok =
+        await UnpaywallService().fetchOaPdf(doi: paper.doi!, savePath: savePath);
+    if (ok) {
+      await ref
+          .read(paperDaoProvider)
+          .updatePaper(paper.copyWith(localPdfPath: savePath));
+      await ref.read(libraryProvider.notifier).refresh();
+      messenger.showSnackBar(
+          const SnackBar(content: Text('Open-access PDF downloaded')));
+    } else {
+      messenger.showSnackBar(const SnackBar(
+          content: Text('No open-access PDF found for this DOI')));
+    }
+  }
+
+  Future<String?> _buildMarkdownSummary(
+      WidgetRef ref, PaperModel paper) async {
+    if (paper.id == null) return null;
+    final records =
+        await ref.read(annotationDaoProvider).getForPaper(paper.id!);
+    final annotations = records.map(AnnotationModel.fromRecord).toList();
+    final style = citationStyleFor(
+        ref.read(settingsProvider).value?.defaultCitationStyle ??
+            DefaultCitationStyle.apa);
+    final withKey = await ensureCitationKey(ref, paper);
+    return ExportService().toMarkdownSummary(
+      withKey,
+      annotations,
+      formattedCitation: style.format(paper),
+    );
+  }
+
+  Future<void> _copyMarkdownSummary(
+      BuildContext context, WidgetRef ref, PaperModel paper) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final markdown = await _buildMarkdownSummary(ref, paper);
+    if (markdown == null) return;
+    await Clipboard.setData(ClipboardData(text: markdown));
+    messenger.showSnackBar(
+        const SnackBar(content: Text('Markdown summary copied')));
+  }
+
+  Future<void> _saveMarkdownSummary(
+      BuildContext context, WidgetRef ref, PaperModel paper) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final markdown = await _buildMarkdownSummary(ref, paper);
+    if (markdown == null) return;
+
+    final safeName = (paper.bibtexKey ?? 'paper_${paper.id}')
+        .replaceAll(RegExp(r'[^\w\-]'), '_');
+    final savePath = await FilePicker.platform.saveFile(
+      dialogTitle: 'Save annotation summary',
+      fileName: '$safeName.md',
+      type: FileType.custom,
+      allowedExtensions: ['md'],
+    );
+    if (savePath == null) return;
+
+    await File(savePath).writeAsString(markdown);
+    messenger.showSnackBar(SnackBar(
+        content: Text('Saved ${p.basename(savePath)}')));
   }
 
   Future<void> _openDoi(String doi) async {

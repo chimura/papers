@@ -42,6 +42,8 @@ class _EditPaperDialogState extends ConsumerState<EditPaperDialog> {
   late final _abstract =
       TextEditingController(text: widget.paper.abstract_ ?? '');
   late final _tags = TextEditingController(text: widget.paper.tags.join(', '));
+  late final _citekey =
+      TextEditingController(text: widget.paper.bibtexKey ?? '');
 
   bool _saving = false;
 
@@ -49,7 +51,7 @@ class _EditPaperDialogState extends ConsumerState<EditPaperDialog> {
   void dispose() {
     for (final c in [
       _title, _authors, _year, _journal, _volume, _issue,
-      _pages, _doi, _url, _abstract, _tags,
+      _pages, _doi, _url, _abstract, _tags, _citekey,
     ]) {
       c.dispose();
     }
@@ -150,6 +152,15 @@ class _EditPaperDialogState extends ConsumerState<EditPaperDialog> {
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
+                  controller: _citekey,
+                  decoration: const InputDecoration(
+                    labelText: 'Citation key',
+                    helperText:
+                        'Used for BibTeX and \\cite{}. Editing pins it.',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
                   controller: _abstract,
                   decoration: const InputDecoration(labelText: 'Abstract'),
                   maxLines: 6,
@@ -183,6 +194,8 @@ class _EditPaperDialogState extends ConsumerState<EditPaperDialog> {
     }
 
     final original = widget.paper;
+    final editedKey = emptyToNull(_citekey);
+    final keyChanged = editedKey != original.bibtexKey;
     final updated = PaperModel(
       id: original.id,
       title: _title.text.trim(),
@@ -201,7 +214,13 @@ class _EditPaperDialogState extends ConsumerState<EditPaperDialog> {
       dateAdded: original.dateAdded,
       dateModified: DateTime.now(),
       cslJson: original.cslJson,
-      bibtexKey: original.bibtexKey,
+      bibtexKey: editedKey,
+      // A hand-edited key is pinned; clearing the key unpins so it can be
+      // regenerated on demand.
+      bibtexKeyPinned:
+          editedKey == null ? false : (keyChanged || original.bibtexKeyPinned),
+      // Reading position is intentionally omitted — the DAO never writes
+      // those columns from a model, so it cannot be clobbered here.
       authors: _parseAuthors(_authors.text),
       tags: _tags.text
           .split(',')

@@ -8,7 +8,21 @@ import 'package:sqflite/sqflite.dart';
 class AppDatabase {
   static const _databaseName = 'papers.db';
   static const _legacyDatabaseName = 'sci.db';
-  static const _databaseVersion = 1;
+  static const _databaseVersion = 2;
+
+  /// Sequential migrations: entry N upgrades a version N-1 database to N.
+  /// [_onCreate] must always produce the latest schema directly, so new
+  /// installs never run these.
+  static final Map<int, Future<void> Function(Database)> _migrations = {
+    2: (db) async {
+      await db.execute('ALTER TABLE papers ADD COLUMN last_read_page INTEGER');
+      await db.execute('ALTER TABLE papers ADD COLUMN last_read_zoom REAL');
+      await db.execute('ALTER TABLE papers ADD COLUMN last_read_at TEXT');
+      await db.execute('ALTER TABLE papers ADD COLUMN total_pages INTEGER');
+      await db.execute(
+          'ALTER TABLE papers ADD COLUMN bibtex_key_pinned INTEGER NOT NULL DEFAULT 0');
+    },
+  };
 
   AppDatabase._() : _overridePath = null;
 
@@ -49,10 +63,18 @@ class AppDatabase {
       path,
       version: _databaseVersion,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
     );
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    for (var v = oldVersion + 1; v <= newVersion; v++) {
+      final migration = _migrations[v];
+      if (migration != null) await migration(db);
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -75,7 +97,12 @@ class AppDatabase {
         date_added TEXT NOT NULL,
         date_modified TEXT NOT NULL,
         csl_json TEXT,
-        bibtex_key TEXT
+        bibtex_key TEXT,
+        bibtex_key_pinned INTEGER NOT NULL DEFAULT 0,
+        last_read_page INTEGER,
+        last_read_zoom REAL,
+        last_read_at TEXT,
+        total_pages INTEGER
       )
     ''');
 

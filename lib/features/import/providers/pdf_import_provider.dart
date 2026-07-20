@@ -1,15 +1,16 @@
-import 'dart:io';
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import '../../../core/models/paper_model.dart';
+import '../services/file_import_service.dart';
 import '../services/metadata_extractor.dart';
 
 final metadataExtractorProvider = Provider<MetadataExtractor>(
   (ref) => MetadataExtractor(),
+);
+
+final fileImportServiceProvider = Provider<FileImportService>(
+  (ref) => FileImportService(extractor: ref.read(metadataExtractorProvider)),
 );
 
 class PdfImportState {
@@ -56,31 +57,9 @@ class PdfImportNotifier extends Notifier<PdfImportState> {
         return;
       }
 
-      // Copy PDF to app documents directory
-      final docsDir = await getApplicationDocumentsDirectory();
-      final pdfsDir = Directory(p.join(docsDir.path, 'papers_pdfs'));
-      if (!pdfsDir.existsSync()) {
-        pdfsDir.createSync(recursive: true);
-      }
-
-      final filename = p.basename(sourcePath);
-      final destPath = p.join(pdfsDir.path, filename);
-      await File(sourcePath).copy(destPath);
-
-      // Try to extract metadata from filename
-      final extractor = ref.read(metadataExtractorProvider);
-      final metadataPaper = await extractor.fromFilename(filename);
-
-      final now = DateTime.now();
-      final paper = metadataPaper?.copyWith(localPdfPath: destPath) ??
-          PaperModel(
-            title: p.basenameWithoutExtension(filename),
-            localPdfPath: destPath,
-            dateAdded: now,
-            dateModified: now,
-          );
-
-      state = PdfImportState(paper: paper, localPath: destPath);
+      final paper =
+          await ref.read(fileImportServiceProvider).importPdf(sourcePath);
+      state = PdfImportState(paper: paper, localPath: paper.localPdfPath);
     } catch (e) {
       state = PdfImportState(error: e.toString());
     }

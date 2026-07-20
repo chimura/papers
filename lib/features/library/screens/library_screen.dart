@@ -1,13 +1,22 @@
+import 'dart:io';
+
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 
 import '../../../core/auth/auth_provider.dart';
 import '../../../core/drive/drive_provider.dart';
 import '../../../core/drive/drive_sync_service.dart';
 import '../../../core/models/paper_model.dart';
 import '../../../core/router/app_router.dart';
+import '../../citations/services/citation_clipboard.dart';
+import '../../import/providers/pdf_import_provider.dart';
 import '../../import/screens/import_screen.dart';
+import '../../import/services/bibtex_parser_service.dart';
+import '../../import/services/ris_parser_service.dart';
+import '../../reader/screens/reader_screen.dart';
 import '../models/library_filter.dart';
 import '../providers/collection_providers.dart';
 import '../providers/library_filter_provider.dart';
@@ -27,6 +36,7 @@ class LibraryScreen extends ConsumerStatefulWidget {
 
 class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   bool _isSearching = false;
+  bool _dragging = false;
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
 
@@ -88,10 +98,34 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         const SingleActivator(LogicalKeyboardKey.escape): () {
           if (_isSearching) _toggleSearch();
         },
+        const SingleActivator(LogicalKeyboardKey.keyC,
+            control: true, shift: true): () {
+          final paper = ref.read(selectedPaperProvider);
+          if (paper != null) copyFormattedCitation(ref, context, paper);
+        },
+        const SingleActivator(LogicalKeyboardKey.keyB,
+            control: true, shift: true): () {
+          final paper = ref.read(selectedPaperProvider);
+          if (paper != null) copyBibtexEntry(ref, context, paper);
+        },
+        const SingleActivator(LogicalKeyboardKey.keyK,
+            control: true, shift: true): () {
+          final paper = ref.read(selectedPaperProvider);
+          if (paper != null) copyCiteCommand(ref, context, paper);
+        },
       },
       child: Focus(
         autofocus: true,
-        child: Scaffold(
+        child: DropTarget(
+          onDragEntered: (_) => setState(() => _dragging = true),
+          onDragExited: (_) => setState(() => _dragging = false),
+          onDragDone: (details) {
+            setState(() => _dragging = false);
+            _handleDrop(details);
+          },
+          child: Stack(
+            children: [
+              Scaffold(
           appBar: AppBar(
             title: _isSearching
                 ? TextField(
@@ -133,14 +167,92 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               : isWide
                   ? _buildWideLayout(theme, libraryState, filter, selectedPaper)
                   : _buildNarrowLayout(theme, libraryState, filter),
-          floatingActionButton: FloatingActionButton(
-            onPressed: () => _openImport(context),
-            tooltip: 'Import paper (Ctrl+N)',
-            child: const Icon(Icons.add),
+                floatingActionButton: FloatingActionButton(
+                  onPressed: () => _openImport(context),
+                  tooltip: 'Import paper (Ctrl+N)',
+                  child: const Icon(Icons.add),
+                ),
+              ),
+              if (_dragging)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Container(
+                      color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                      child: Center(
+                        child: Card(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 32, vertical: 24),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.file_download_outlined,
+                                    size: 48,
+                                    color: theme.colorScheme.primary),
+                                const SizedBox(height: 8),
+                                const Text(
+                                    'Drop PDF, BibTeX, or RIS files to import'),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
     );
+  }
+
+  Future<void> _handleDrop(DropDoneDetails details) async {
+    final messenger = ScaffoldMessenger.of(context);
+    var pdfCount = 0, refCount = 0, skipped = 0;
+
+    for (final file in details.files) {
+      final path = file.path;
+      final ext = p.extension(path).toLowerCase();
+      try {
+        switch (ext) {
+          case '.pdf':
+            final paper =
+                await ref.read(fileImportServiceProvider).importPdf(path);
+            await ref.read(libraryProvider.notifier).addPaper(paper);
+            pdfCount++;
+          case '.bib':
+            final papers =
+                BibtexParserService().parse(await File(path).readAsString());
+            for (final paper in papers) {
+              await ref.read(libraryProvider.notifier).addPaper(paper);
+              refCount++;
+            }
+          case '.ris':
+            final papers =
+                RisParserService().parse(await File(path).readAsString());
+            for (final paper in papers) {
+              await ref.read(libraryProvider.notifier).addPaper(paper);
+              refCount++;
+            }
+          default:
+            skipped++;
+        }
+      } catch (_) {
+        skipped++;
+      }
+    }
+
+    final parts = <String>[
+      if (pdfCount > 0) '$pdfCount PDF${pdfCount == 1 ? '' : 's'}',
+      if (refCount > 0) '$refCount reference${refCount == 1 ? '' : 's'}',
+    ];
+    messenger.showSnackBar(SnackBar(
+      content: Text(parts.isEmpty
+          ? 'Nothing to import — drop PDF, .bib, or .ris files'
+          : 'Imported ${parts.join(' and ')}'
+              '${skipped > 0 ? ' ($skipped skipped)' : ''}'),
+    ));
   }
 
   Widget _buildSortMenu(LibraryFilter filter) {
@@ -263,7 +375,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           return _buildEmptyState(theme, filter);
         }
 
-        return RefreshIndicator(
+        final list = RefreshIndicator(
           onRefresh: () => ref.read(libraryProvider.notifier).refresh(),
           child: ListView.separated(
             itemCount: papers.length,
@@ -292,8 +404,37 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             },
           ),
         );
+
+        final continueReading = filter.isActive
+            ? const <PaperModel>[]
+            : ((allPapers
+                    .where(
+                        (p) => p.lastReadAt != null && p.localPdfPath != null)
+                    .toList()
+                  ..sort((a, b) => b.lastReadAt!.compareTo(a.lastReadAt!)))
+                .take(8)
+                .toList());
+
+        if (continueReading.isEmpty) return list;
+
+        return Column(
+          children: [
+            _ContinueReadingShelf(
+              papers: continueReading,
+              onTap: _openReader,
+            ),
+            const Divider(height: 1),
+            Expanded(child: list),
+          ],
+        );
       },
     );
+  }
+
+  void _openReader(PaperModel paper) {
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => ReaderScreen(paper: paper)))
+        .then((_) => ref.read(libraryProvider.notifier).refresh());
   }
 
   // ── Search results ──
@@ -473,6 +614,94 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     });
 
     return result;
+  }
+}
+
+/// Horizontal "Continue reading" strip of recently opened papers.
+class _ContinueReadingShelf extends StatelessWidget {
+  final List<PaperModel> papers;
+  final void Function(PaperModel) onTap;
+
+  const _ContinueReadingShelf({required this.papers, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return SizedBox(
+      height: 108,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Text(
+              'Continue reading',
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: theme.colorScheme.primary,
+              ),
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: papers.length,
+              itemBuilder: (context, index) {
+                final paper = papers[index];
+                final progress = (paper.totalPages ?? 0) > 0
+                    ? (paper.lastReadPage ?? 1) / paper.totalPages!
+                    : null;
+
+                return SizedBox(
+                  width: 220,
+                  child: Card(
+                    margin: const EdgeInsets.symmetric(
+                        horizontal: 4, vertical: 4),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => onTap(paper),
+                      child: Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                paper.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            if (progress != null) ...[
+                              LinearProgressIndicator(
+                                value: progress.clamp(0.0, 1.0),
+                                minHeight: 3,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'p. ${paper.lastReadPage} / ${paper.totalPages}',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

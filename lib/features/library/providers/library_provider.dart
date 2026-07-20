@@ -2,6 +2,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/database_provider.dart';
 import '../../../core/models/paper_model.dart';
+import '../../citations/services/citekey_service.dart';
+import '../../settings/models/app_settings.dart';
+import '../../settings/providers/settings_provider.dart';
 
 final libraryProvider =
     AsyncNotifierProvider<LibraryNotifier, List<PaperModel>>(
@@ -36,9 +39,33 @@ class LibraryNotifier extends AsyncNotifier<List<PaperModel>> {
 
   Future<int> addPaper(PaperModel paper) async {
     final dao = ref.read(paperDaoProvider);
-    final id = await dao.insertPaper(paper);
+    final id = await dao.insertPaper(await _withCitationKey(paper));
     await refresh();
     return id;
+  }
+
+  /// Every paper gets a unique citation key at insert time. Keys arriving
+  /// from BibTeX/RIS imports are kept (uniquified if colliding) and pinned.
+  Future<PaperModel> _withCitationKey(PaperModel paper) async {
+    final existing = await ref.read(paperDaoProvider).getAllBibtexKeys();
+    final service = CitekeyService();
+
+    final imported = paper.bibtexKey;
+    if (imported != null && imported.isNotEmpty) {
+      return paper.copyWith(
+        bibtexKey: service.ensureUnique(imported, existing),
+        bibtexKeyPinned: true,
+      );
+    }
+
+    final pattern = ref.read(settingsProvider).value?.citationKeyPattern ??
+        AppSettings.defaultCitationKeyPattern;
+    return paper.copyWith(
+      bibtexKey: service.ensureUnique(
+        service.generateKey(paper, pattern: pattern),
+        existing,
+      ),
+    );
   }
 
   Future<void> updatePaperDetails(PaperModel paper) async {

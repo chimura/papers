@@ -7,6 +7,12 @@ class HighlightOverlay extends StatelessWidget {
   final List<AnnotationModel> annotations;
   final Size pageSize;
   final bool visible;
+
+  /// Set when the parent viewer applies an inverting color filter (dark PDF
+  /// mode): colors are pre-inverted here so they display true after the
+  /// outer inversion.
+  final bool invertColors;
+
   final void Function(AnnotationModel)? onAnnotationTap;
 
   const HighlightOverlay({
@@ -14,8 +20,20 @@ class HighlightOverlay extends StatelessWidget {
     required this.annotations,
     required this.pageSize,
     this.visible = true,
+    this.invertColors = false,
     this.onAnnotationTap,
   });
+
+  Color _displayColor(Color color) {
+    if (!invertColors) return color;
+    final argb = color.toARGB32();
+    return Color.fromARGB(
+      (argb >> 24) & 0xFF,
+      255 - ((argb >> 16) & 0xFF),
+      255 - ((argb >> 8) & 0xFF),
+      255 - (argb & 0xFF),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +58,8 @@ class HighlightOverlay extends StatelessWidget {
                   onTap: () => onAnnotationTap?.call(annotation),
                   child: Container(
                     decoration: BoxDecoration(
-                      color: annotation.color.withValues(alpha: 0.35),
+                      color: _displayColor(annotation.color)
+                          .withValues(alpha: 0.35),
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
@@ -58,7 +77,7 @@ class HighlightOverlay extends StatelessWidget {
                     width: 24,
                     height: 24,
                     decoration: BoxDecoration(
-                      color: annotation.color,
+                      color: _displayColor(annotation.color),
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
