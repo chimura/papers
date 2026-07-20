@@ -52,6 +52,10 @@ class PaperModel {
   final List<String> tags;
   final List<String> collections;
 
+  /// A PDF path referenced by a BibTeX/RIS import, used only while importing
+  /// to attach the file. Never persisted (absent from [toMap]/[fromMap]).
+  final String? importedFilePath;
+
   const PaperModel({
     this.id,
     required this.title,
@@ -89,6 +93,7 @@ class PaperModel {
     this.authors = const [],
     this.tags = const [],
     this.collections = const [],
+    this.importedFilePath,
   });
 
   PaperModel copyWith({
@@ -128,6 +133,7 @@ class PaperModel {
     List<AuthorModel>? authors,
     List<String>? tags,
     List<String>? collections,
+    String? importedFilePath,
   }) {
     return PaperModel(
       id: id ?? this.id,
@@ -166,6 +172,7 @@ class PaperModel {
       authors: authors ?? this.authors,
       tags: tags ?? this.tags,
       collections: collections ?? this.collections,
+      importedFilePath: importedFilePath ?? this.importedFilePath,
     );
   }
 

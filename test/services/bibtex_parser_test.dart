@@ -69,4 +69,20 @@ void main() {
   test('returns empty list for garbage input', () {
     expect(parser.parse('not bibtex at all'), isEmpty);
   });
+
+  test('captures a linked PDF path from the file field', () {
+    const bibtex = '''
+@article{k,
+  title = {Has a PDF},
+  file = {Full Text PDF:/home/me/storage/AB/paper.pdf:application/pdf}
+}
+''';
+    final paper = parser.parse(bibtex).single;
+    expect(paper.importedFilePath, '/home/me/storage/AB/paper.pdf');
+  });
+
+  test('entry without a file field has no PDF hint', () {
+    final paper = parser.parse('@article{k, title = {No PDF}}').single;
+    expect(paper.importedFilePath, isNull);
+  });
 }

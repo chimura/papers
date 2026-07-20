@@ -1,5 +1,6 @@
 import '../../../core/models/author_model.dart';
 import '../../../core/models/paper_model.dart';
+import 'attachment_path_parser.dart';
 
 class BibtexParserService {
   List<PaperModel> parse(String bibtex) {
@@ -29,9 +30,16 @@ class BibtexParserService {
     final bibtexKey = headerMatch.group(2)?.trim();
     final fields = _parseFields(entry.substring(headerMatch.end));
 
+    // The raw `file` value carries linked PDF paths (Zotero/Mendeley/JabRef).
+    final fileField = fields['file'];
+    final pdfPaths = fileField != null
+        ? AttachmentPathParser.fromBibtexFileField(fileField)
+        : const <String>[];
+
     final now = DateTime.now();
 
     return PaperModel(
+      importedFilePath: pdfPaths.isNotEmpty ? pdfPaths.first : null,
       title: _cleanValue(fields['title'] ?? 'Untitled'),
       abstract_: fields['abstract'] != null ? _cleanValue(fields['abstract']!) : null,
       doi: fields['doi'] != null ? _cleanValue(fields['doi']!) : null,

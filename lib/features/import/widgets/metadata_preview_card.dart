@@ -40,6 +40,20 @@ class MetadataPreviewCard extends StatelessWidget {
               ),
             const SizedBox(height: 4),
             _buildMetadataRow(theme, paper),
+            if (paper.importedFilePath != null) ...[
+              const SizedBox(height: 6),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.attachment,
+                      size: 16, color: theme.colorScheme.primary),
+                  const SizedBox(width: 4),
+                  Text('PDF linked',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: theme.colorScheme.primary)),
+                ],
+              ),
+            ],
             if (paper.abstract_ != null) ...[
               const SizedBox(height: 8),
               Text(

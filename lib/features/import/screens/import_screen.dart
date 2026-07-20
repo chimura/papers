@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
+import '../../../core/models/paper_model.dart';
 import '../../library/providers/library_provider.dart';
 import '../providers/bibtex_import_provider.dart';
 import '../providers/doi_import_provider.dart';
@@ -426,17 +427,24 @@ class _BibtexTab extends ConsumerWidget {
   }
 
   Future<void> _importPaper(
-      BuildContext context, WidgetRef ref, paper) async {
-    await ref.read(libraryProvider.notifier).addPaper(paper);
+      BuildContext context, WidgetRef ref, PaperModel paper) async {
+    final sourceDir = ref.read(bibtexImportProvider).sourceDir;
+    final withPdf = await ref
+        .read(fileImportServiceProvider)
+        .attachImportedPdf(paper, baseDir: sourceDir);
+    await ref.read(libraryProvider.notifier).addPaper(withPdf);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Added: ${paper.title}')),
+        SnackBar(content: Text(withPdf.localPdfPath != null
+            ? 'Added with PDF: ${paper.title}'
+            : 'Added: ${paper.title}')),
       );
     }
   }
 
   /// Loads a whole reference-manager export off disk. RIS is parsed here and
-  /// pushed into the same preview list the BibTeX parser feeds.
+  /// pushed into the same preview list the BibTeX parser feeds. The file's
+  /// directory is remembered so relative PDF paths resolve on import.
   Future<void> _openFile(BuildContext context, WidgetRef ref,
       TextEditingController controller) async {
     final result = await FilePicker.platform.pickFiles(
@@ -449,29 +457,42 @@ class _BibtexTab extends ConsumerWidget {
 
     final messenger = ScaffoldMessenger.of(context);
     final content = await File(path).readAsString();
+    final sourceDir = p.dirname(path);
 
     if (p.extension(path).toLowerCase() == '.ris') {
       final papers = RisParserService().parse(content);
-      ref.read(bibtexImportProvider.notifier).setPapers(papers);
+      ref
+          .read(bibtexImportProvider.notifier)
+          .setPapers(papers, sourceDir: sourceDir);
       messenger.showSnackBar(SnackBar(
           content: Text('Parsed ${papers.length} entries from '
               '${p.basename(path)}')));
     } else {
       controller.text = content;
-      ref.read(bibtexImportProvider.notifier).parseBibtex(content);
+      ref
+          .read(bibtexImportProvider.notifier)
+          .parseBibtex(content, sourceDir: sourceDir);
     }
   }
 
   Future<void> _importAll(BuildContext context, WidgetRef ref) async {
-    final papers = ref.read(bibtexImportProvider).papers;
-    for (final paper in papers) {
-      await ref.read(libraryProvider.notifier).addPaper(paper);
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    final state = ref.read(bibtexImportProvider);
+    final fileService = ref.read(fileImportServiceProvider);
+
+    var attached = 0;
+    for (final paper in state.papers) {
+      final withPdf =
+          await fileService.attachImportedPdf(paper, baseDir: state.sourceDir);
+      if (withPdf.localPdfPath != null) attached++;
+      await ref.read(libraryProvider.notifier).addPaper(withPdf);
     }
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${papers.length} papers added to library')),
-      );
-      Navigator.of(context).pop();
-    }
+
+    messenger.showSnackBar(SnackBar(
+      content: Text('${state.papers.length} papers added'
+          '${attached > 0 ? ' ($attached with PDFs)' : ''}'),
+    ));
+    navigator.pop();
   }
 }

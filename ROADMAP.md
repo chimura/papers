@@ -73,10 +73,15 @@ and `auto_exports` tables.
 - [x] **Add-by-identifier: DOI + arXiv + PMID, bulk paste** — new Identifiers
   tab takes a mixed blob; `IdentifierResolverService` detects each type and
   resolves via CrossRef / arXiv Atom API / PubMed E-utilities, with add-all.
-- [x] **Bulk BibTeX/RIS file import** — "Open .bib / .ris file" in the import
-  screen (plus drag-and-drop from Tier 1) feeding the same preview + add-all
-  list. *Not done: attaching PDFs referenced by Zotero/JabRef `file = {...}`
-  fields, and per-entry "already in library" flags.*
+- [x] **Bulk BibTeX/RIS file import + PDF attach** — "Open .bib / .ris file"
+  in the import screen (plus drag-and-drop) feeding the preview + add-all
+  list, **and PDFs linked in the export come across automatically**: the
+  BibTeX `file` field and RIS `L1`/`LK` link are parsed
+  (`AttachmentPathParser` handles Zotero/Mendeley/JabRef escaping, Windows
+  drive letters, and `file://` URIs), resolved absolute-or-relative to the
+  export's folder, and copied into the library on import. This is the
+  Mendeley/Zotero migration path. *Not done: per-entry "already in library"
+  flags on the preview list.*
 - [ ] **papers:// protocol + capture bookmarklet** — deferred; needs
   `protocol_handler` + `window_manager` and changes app launch behavior.
 
@@ -169,7 +174,9 @@ Highest-value remaining work, roughly in order:
 
 1. **LaTeX escaping in `toBibtex`** — small, and auto-export makes it matter.
 2. **Manually verify PDF text extraction** against a few real papers
-   (stage 1 of the extractor cascade has no unit test).
+   (stage 1 of the extractor cascade has no unit test). Same for the
+   Mendeley `file`-field PDF attach — unit-tested across formats, but worth
+   one real Mendeley/Zotero export end-to-end.
 3. **Markdown rendering + clickable backlinks in the Notebook** — the notes
    feature is functional but plain-text today.
 4. **Read Next queue UI** and the **nested collections tree** — both have

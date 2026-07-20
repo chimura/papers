@@ -11,7 +11,15 @@ class BibtexImportState {
   final List<PaperModel> papers;
   final String? error;
 
-  const BibtexImportState({this.papers = const [], this.error});
+  /// Directory of the opened .bib/.ris file, used to resolve relative PDF
+  /// paths (null for pasted text).
+  final String? sourceDir;
+
+  const BibtexImportState({
+    this.papers = const [],
+    this.error,
+    this.sourceDir,
+  });
 }
 
 final bibtexImportProvider =
@@ -23,11 +31,11 @@ class BibtexImportNotifier extends Notifier<BibtexImportState> {
   @override
   BibtexImportState build() => const BibtexImportState();
 
-  void parseBibtex(String bibtex) {
+  void parseBibtex(String bibtex, {String? sourceDir}) {
     try {
       final parser = ref.read(bibtexParserProvider);
       final papers = parser.parse(bibtex);
-      state = BibtexImportState(papers: papers);
+      state = BibtexImportState(papers: papers, sourceDir: sourceDir);
     } catch (e) {
       state = BibtexImportState(error: e.toString());
     }
@@ -35,9 +43,10 @@ class BibtexImportNotifier extends Notifier<BibtexImportState> {
 
   /// Used by the RIS file path, which parses elsewhere but shares this
   /// preview list.
-  void setPapers(List<PaperModel> papers) {
+  void setPapers(List<PaperModel> papers, {String? sourceDir}) {
     state = BibtexImportState(
       papers: papers,
+      sourceDir: sourceDir,
       error: papers.isEmpty ? 'No entries found in that file' : null,
     );
   }

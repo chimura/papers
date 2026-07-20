@@ -1,5 +1,6 @@
 import '../../../core/models/author_model.dart';
 import '../../../core/models/paper_model.dart';
+import 'attachment_path_parser.dart';
 
 class RisParserService {
   /// Matches a RIS tag line: two-character tag, two spaces, hyphen, space.
@@ -58,6 +59,7 @@ class RisParserService {
     String? url;
     String? publisher;
     String? abstract_;
+    String? fileLink;
     final authors = <AuthorModel>[];
     final tags = <String>[];
 
@@ -90,6 +92,9 @@ class RisParserService {
           publisher ??= value;
         case 'AB' || 'N2':
           abstract_ ??= value;
+        case 'L1' || 'LK':
+          // Link to the local PDF (first PDF-looking link wins).
+          fileLink ??= AttachmentPathParser.fromRisLink(value);
         case 'KW':
           tags.add(value);
         default:
@@ -101,6 +106,7 @@ class RisParserService {
     final now = DateTime.now();
 
     return PaperModel(
+      importedFilePath: fileLink,
       title: title ?? 'Untitled',
       abstract_: abstract_,
       doi: doi,

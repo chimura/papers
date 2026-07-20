@@ -230,7 +230,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
   Future<void> _handleDrop(DropDoneDetails details) async {
     final messenger = ScaffoldMessenger.of(context);
-    var pdfCount = 0, refCount = 0, skipped = 0;
+    var pdfCount = 0, refCount = 0, refPdfCount = 0, skipped = 0;
 
     for (final file in details.files) {
       final path = file.path;
@@ -243,19 +243,19 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             await ref.read(libraryProvider.notifier).addPaper(paper);
             pdfCount++;
           case '.bib':
-            final papers =
-                BibtexParserService().parse(await File(path).readAsString());
-            for (final paper in papers) {
-              await ref.read(libraryProvider.notifier).addPaper(paper);
-              refCount++;
-            }
+            final (added, withPdf) = await _addReferences(
+              BibtexParserService().parse(await File(path).readAsString()),
+              baseDir: p.dirname(path),
+            );
+            refCount += added;
+            refPdfCount += withPdf;
           case '.ris':
-            final papers =
-                RisParserService().parse(await File(path).readAsString());
-            for (final paper in papers) {
-              await ref.read(libraryProvider.notifier).addPaper(paper);
-              refCount++;
-            }
+            final (added, withPdf) = await _addReferences(
+              RisParserService().parse(await File(path).readAsString()),
+              baseDir: p.dirname(path),
+            );
+            refCount += added;
+            refPdfCount += withPdf;
           default:
             skipped++;
         }
@@ -266,7 +266,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
     final parts = <String>[
       if (pdfCount > 0) '$pdfCount PDF${pdfCount == 1 ? '' : 's'}',
-      if (refCount > 0) '$refCount reference${refCount == 1 ? '' : 's'}',
+      if (refCount > 0)
+        '$refCount reference${refCount == 1 ? '' : 's'}'
+            '${refPdfCount > 0 ? ' ($refPdfCount with PDFs)' : ''}',
     ];
     messenger.showSnackBar(SnackBar(
       content: Text(parts.isEmpty
@@ -274,6 +276,24 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           : 'Imported ${parts.join(' and ')}'
               '${skipped > 0 ? ' ($skipped skipped)' : ''}'),
     ));
+  }
+
+  /// Adds parsed references, attaching each linked PDF resolved against
+  /// [baseDir]. Returns (references added, of which had a PDF attached).
+  Future<(int, int)> _addReferences(
+    List<PaperModel> papers, {
+    required String baseDir,
+  }) async {
+    final fileService = ref.read(fileImportServiceProvider);
+    var added = 0, withPdf = 0;
+    for (final paper in papers) {
+      final resolved =
+          await fileService.attachImportedPdf(paper, baseDir: baseDir);
+      if (resolved.localPdfPath != null) withPdf++;
+      await ref.read(libraryProvider.notifier).addPaper(resolved);
+      added++;
+    }
+    return (added, withPdf);
   }
 
   Widget _buildSortMenu(LibraryFilter filter) {

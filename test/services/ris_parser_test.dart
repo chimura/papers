@@ -4,6 +4,16 @@ import 'package:papers/features/import/services/ris_parser_service.dart';
 void main() {
   final parser = RisParserService();
 
+  test('captures a linked PDF path from an L1 link', () {
+    const ris = '''
+TY  - JOUR
+TI  - Linked paper
+L1  - file://C:/Users/me/paper.pdf
+ER  -
+''';
+    expect(parser.parse(ris).single.importedFilePath, 'C:/Users/me/paper.pdf');
+  });
+
   test('parses a multi-record Zotero-style export', () {
     const ris = '''
 Provider: Zotero

@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -11,11 +12,16 @@ import 'metadata_extractor.dart';
 /// with whatever metadata can be extracted. Does not insert into the library.
 class FileImportService {
   final MetadataExtractor _extractor;
+  final Future<Directory> Function()? _pdfsDirOverride;
 
-  FileImportService({MetadataExtractor? extractor})
-      : _extractor = extractor ?? MetadataExtractor();
+  FileImportService({
+    MetadataExtractor? extractor,
+    @visibleForTesting Future<Directory> Function()? pdfsDirectory,
+  })  : _extractor = extractor ?? MetadataExtractor(),
+        _pdfsDirOverride = pdfsDirectory;
 
   Future<Directory> pdfsDirectory() async {
+    if (_pdfsDirOverride != null) return _pdfsDirOverride();
     final docsDir = await getApplicationDocumentsDirectory();
     final pdfsDir = Directory(p.join(docsDir.path, 'papers_pdfs'));
     if (!pdfsDir.existsSync()) {
@@ -50,6 +56,45 @@ class FileImportService {
           dateAdded: now,
           dateModified: now,
         );
+  }
+
+  /// If [paper] carries an [PaperModel.importedFilePath] hint from a BibTeX/RIS
+  /// import, resolve it (absolute, or relative to [baseDir]) and copy the PDF
+  /// into the library. Returns the paper unchanged when there is no hint, it
+  /// already has a PDF, or the file can't be found on disk.
+  Future<PaperModel> attachImportedPdf(PaperModel paper,
+      {String? baseDir}) async {
+    final hint = paper.importedFilePath;
+    if (hint == null || paper.localPdfPath != null) return paper;
+
+    final source = resolveExistingPath(hint, baseDir);
+    if (source == null) return paper;
+
+    try {
+      final dest =
+          _uniqueDestination(await pdfsDirectory(), p.basename(source));
+      await File(source).copy(dest);
+      return paper.copyWith(localPdfPath: dest);
+    } catch (_) {
+      return paper;
+    }
+  }
+
+  /// Returns the first existing file for [rawPath]: the path itself (when
+  /// absolute) or joined onto [baseDir]. Null when nothing is found.
+  String? resolveExistingPath(String rawPath, String? baseDir) {
+    final candidates = <String>[
+      rawPath,
+      if (baseDir != null) p.join(baseDir, rawPath),
+    ];
+    for (final candidate in candidates) {
+      try {
+        if (File(candidate).existsSync()) return candidate;
+      } catch (_) {
+        // Malformed path on this platform — try the next candidate.
+      }
+    }
+    return null;
   }
 
   /// Avoids silently overwriting a different file with the same name.
