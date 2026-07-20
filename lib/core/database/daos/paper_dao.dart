@@ -4,6 +4,8 @@ import '../../models/author_model.dart';
 import '../../models/paper_model.dart';
 import '../app_database.dart';
 
+export '../../models/paper_model.dart' show ReadStatus;
+
 class PaperDao {
   final AppDatabase _appDatabase;
 
@@ -219,6 +221,136 @@ class PaperDao {
       where: 'id = ?',
       whereArgs: [id],
     );
+  }
+
+  // ── Reading status & queue ──
+
+  Future<void> setReadStatus(int id, ReadStatus status) async {
+    final db = await _db;
+    await db.update(
+      'papers',
+      {
+        'read_status': status.name,
+        if (status == ReadStatus.read)
+          'date_read': DateTime.now().toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Marks a paper as being read, but never downgrades one already finished.
+  Future<void> markReadingIfUnread(int id) async {
+    final db = await _db;
+    await db.update(
+      'papers',
+      {'read_status': ReadStatus.reading.name},
+      where: 'id = ? AND read_status = ?',
+      whereArgs: [id, ReadStatus.unread.name],
+    );
+  }
+
+  Future<void> setQueuePosition(int id, int? position) async {
+    final db = await _db;
+    await db.update('papers', {'queue_position': position},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Persists a whole reordered queue in one transaction.
+  Future<void> saveQueueOrder(List<int> orderedPaperIds) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      for (var i = 0; i < orderedPaperIds.length; i++) {
+        await txn.update('papers', {'queue_position': i},
+            where: 'id = ?', whereArgs: [orderedPaperIds[i]]);
+      }
+    });
+  }
+
+  // ── Bulk operations ──
+
+  Future<void> bulkSetFavorite(List<int> ids, bool isFavorite) async {
+    if (ids.isEmpty) return;
+    final db = await _db;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await db.rawUpdate(
+      'UPDATE papers SET is_favorite = ? WHERE id IN ($placeholders)',
+      [isFavorite ? 1 : 0, ...ids],
+    );
+  }
+
+  Future<void> bulkSetReadStatus(List<int> ids, ReadStatus status) async {
+    if (ids.isEmpty) return;
+    final db = await _db;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await db.rawUpdate(
+      'UPDATE papers SET read_status = ? WHERE id IN ($placeholders)',
+      [status.name, ...ids],
+    );
+  }
+
+  Future<void> bulkDelete(List<int> ids) async {
+    if (ids.isEmpty) return;
+    final db = await _db;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await db.rawDelete('DELETE FROM papers WHERE id IN ($placeholders)', ids);
+  }
+
+  Future<void> bulkAddTag(List<int> ids, String tagName) async {
+    if (ids.isEmpty) return;
+    final db = await _db;
+    await db.transaction((txn) async {
+      final tagId = await _insertOrGetTag(txn, tagName);
+      for (final id in ids) {
+        await txn.insert(
+          'paper_tags',
+          {'paper_id': id, 'tag_id': tagId},
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+    });
+  }
+
+  Future<void> bulkRemoveTag(List<int> ids, String tagName) async {
+    if (ids.isEmpty) return;
+    final db = await _db;
+    final rows = await db.query('tags',
+        columns: ['id'], where: 'name = ?', whereArgs: [tagName]);
+    if (rows.isEmpty) return;
+    final tagId = rows.first['id'] as int;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await db.rawDelete(
+      'DELETE FROM paper_tags WHERE tag_id = ? AND paper_id IN ($placeholders)',
+      [tagId, ...ids],
+    );
+  }
+
+  // ── Enrichment / retraction bookkeeping ──
+
+  Future<void> setUpdateStatus(
+    int id, {
+    String? status,
+    String? noticeDoi,
+    String? publishedVersionDoi,
+  }) async {
+    final db = await _db;
+    await db.update(
+      'papers',
+      {
+        'update_status': status,
+        'update_notice_doi': noticeDoi,
+        'published_version_doi': publishedVersionDoi,
+        'updates_checked_at': DateTime.now().toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> clearNeedsReview(int id) async {
+    final db = await _db;
+    await db.update('papers', {'needs_review': 0},
+        where: 'id = ?', whereArgs: [id]);
   }
 
   Future<List<PaperModel>> getPapersWithDoiWithoutPdf() async {

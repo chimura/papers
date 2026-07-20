@@ -1,5 +1,19 @@
 import 'author_model.dart';
 
+enum ReadStatus {
+  unread('Unread'),
+  reading('Reading'),
+  read('Read');
+
+  final String label;
+  const ReadStatus(this.label);
+
+  static ReadStatus fromName(String? name) => ReadStatus.values.firstWhere(
+        (s) => s.name == name,
+        orElse: () => ReadStatus.unread,
+      );
+}
+
 class PaperModel {
   final int? id;
   final String title;
@@ -24,6 +38,16 @@ class PaperModel {
   final double? lastReadZoom;
   final DateTime? lastReadAt;
   final int? totalPages;
+  final String? arxivId;
+  final String? pmid;
+  final ReadStatus readStatus;
+  final DateTime? dateRead;
+  final int? queuePosition;
+  final bool needsReview;
+  final String? updateStatus;
+  final String? updateNoticeDoi;
+  final String? publishedVersionDoi;
+  final DateTime? updatesCheckedAt;
   final List<AuthorModel> authors;
   final List<String> tags;
   final List<String> collections;
@@ -52,6 +76,16 @@ class PaperModel {
     this.lastReadZoom,
     this.lastReadAt,
     this.totalPages,
+    this.arxivId,
+    this.pmid,
+    this.readStatus = ReadStatus.unread,
+    this.dateRead,
+    this.queuePosition,
+    this.needsReview = false,
+    this.updateStatus,
+    this.updateNoticeDoi,
+    this.publishedVersionDoi,
+    this.updatesCheckedAt,
     this.authors = const [],
     this.tags = const [],
     this.collections = const [],
@@ -81,6 +115,16 @@ class PaperModel {
     double? lastReadZoom,
     DateTime? lastReadAt,
     int? totalPages,
+    String? arxivId,
+    String? pmid,
+    ReadStatus? readStatus,
+    DateTime? dateRead,
+    int? queuePosition,
+    bool? needsReview,
+    String? updateStatus,
+    String? updateNoticeDoi,
+    String? publishedVersionDoi,
+    DateTime? updatesCheckedAt,
     List<AuthorModel>? authors,
     List<String>? tags,
     List<String>? collections,
@@ -109,6 +153,16 @@ class PaperModel {
       lastReadZoom: lastReadZoom ?? this.lastReadZoom,
       lastReadAt: lastReadAt ?? this.lastReadAt,
       totalPages: totalPages ?? this.totalPages,
+      arxivId: arxivId ?? this.arxivId,
+      pmid: pmid ?? this.pmid,
+      readStatus: readStatus ?? this.readStatus,
+      dateRead: dateRead ?? this.dateRead,
+      queuePosition: queuePosition ?? this.queuePosition,
+      needsReview: needsReview ?? this.needsReview,
+      updateStatus: updateStatus ?? this.updateStatus,
+      updateNoticeDoi: updateNoticeDoi ?? this.updateNoticeDoi,
+      publishedVersionDoi: publishedVersionDoi ?? this.publishedVersionDoi,
+      updatesCheckedAt: updatesCheckedAt ?? this.updatesCheckedAt,
       authors: authors ?? this.authors,
       tags: tags ?? this.tags,
       collections: collections ?? this.collections,
@@ -140,8 +194,27 @@ class PaperModel {
       'last_read_zoom': lastReadZoom,
       'last_read_at': lastReadAt?.toIso8601String(),
       'total_pages': totalPages,
+      'arxiv_id': arxivId,
+      'pmid': pmid,
+      'read_status': readStatus.name,
+      'date_read': dateRead?.toIso8601String(),
+      'queue_position': queuePosition,
+      'needs_review': needsReview ? 1 : 0,
+      'title_normalized': normalizedTitle,
+      'update_status': updateStatus,
+      'update_notice_doi': updateNoticeDoi,
+      'published_version_doi': publishedVersionDoi,
+      'updates_checked_at': updatesCheckedAt?.toIso8601String(),
     };
   }
+
+  /// Lowercased, punctuation-stripped title used for fuzzy matching and
+  /// duplicate detection. Kept in sync with AppDatabase.normalizeTitle.
+  String get normalizedTitle => title
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9\s]'), '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
 
   static PaperModel fromMap(Map<String, dynamic> map) {
     return PaperModel(
@@ -170,6 +243,20 @@ class PaperModel {
           ? DateTime.parse(map['last_read_at'] as String)
           : null,
       totalPages: map['total_pages'] as int?,
+      arxivId: map['arxiv_id'] as String?,
+      pmid: map['pmid'] as String?,
+      readStatus: ReadStatus.fromName(map['read_status'] as String?),
+      dateRead: map['date_read'] != null
+          ? DateTime.parse(map['date_read'] as String)
+          : null,
+      queuePosition: map['queue_position'] as int?,
+      needsReview: (map['needs_review'] as int?) == 1,
+      updateStatus: map['update_status'] as String?,
+      updateNoticeDoi: map['update_notice_doi'] as String?,
+      publishedVersionDoi: map['published_version_doi'] as String?,
+      updatesCheckedAt: map['updates_checked_at'] != null
+          ? DateTime.parse(map['updates_checked_at'] as String)
+          : null,
     );
   }
 

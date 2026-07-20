@@ -14,6 +14,7 @@ import '../../citations/services/citation_clipboard.dart';
 import '../../citations/services/export_service.dart';
 import '../../enrichment/services/unpaywall_service.dart';
 import '../../import/services/file_import_service.dart';
+import '../../notes/widgets/notes_panel.dart';
 import '../../reader/models/annotation_model.dart';
 import '../../reader/providers/annotation_provider.dart';
 import '../../reader/screens/reader_screen.dart';
@@ -23,25 +24,45 @@ import '../providers/library_provider.dart';
 import '../widgets/collections_dialog.dart';
 import '../widgets/edit_paper_dialog.dart';
 
-class PaperDetailScreen extends ConsumerWidget {
+class PaperDetailScreen extends ConsumerStatefulWidget {
   final PaperModel paper;
 
   const PaperDetailScreen({super.key, required this.paper});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PaperDetailScreen> createState() => _PaperDetailScreenState();
+}
+
+class _PaperDetailScreenState extends ConsumerState<PaperDetailScreen>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController =
+      TabController(length: 2, vsync: this);
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final paper = widget.paper;
 
     // Resolve the live version of this paper so favorite toggles and edits
     // are reflected immediately; fall back to the snapshot we were given.
-    final fresh = ref
+    final live = ref
             .watch(libraryProvider)
             .value
-            ?.where((p) => p.id == this.paper.id)
+            ?.where((p) => p.id == paper.id)
             .firstOrNull ??
-        this.paper;
-    final paper = fresh;
+        paper;
 
+    return _build(context, ref, theme, live);
+  }
+
+  Widget _build(BuildContext context, WidgetRef ref, ThemeData theme,
+      PaperModel paper) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Paper Details'),
@@ -139,10 +160,41 @@ class PaperDetailScreen extends ConsumerWidget {
             ],
           ),
         ],
+        bottom: paper.id == null
+            ? null
+            : TabBar(
+                controller: _tabController,
+                tabs: const [
+                  Tab(text: 'Details'),
+                  Tab(text: 'Notes'),
+                ],
+              ),
       ),
-      body: ListView(
+      body: paper.id == null
+          ? _detailsTab(context, ref, theme, paper)
+          : TabBarView(
+              controller: _tabController,
+              children: [
+                _detailsTab(context, ref, theme, paper),
+                NotesPanel(paperId: paper.id!),
+              ],
+            ),
+      floatingActionButton: paper.localPdfPath != null
+          ? FloatingActionButton.extended(
+              onPressed: () => _openReader(context, ref, paper),
+              icon: const Icon(Icons.menu_book),
+              label: const Text('Read'),
+            )
+          : null,
+    );
+  }
+
+  Widget _detailsTab(BuildContext context, WidgetRef ref, ThemeData theme,
+      PaperModel paper) {
+    return ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          if (paper.updateStatus != null) _UpdateBanner(paper: paper),
           // Title
           Text(
             paper.title,
@@ -240,15 +292,7 @@ class PaperDetailScreen extends ConsumerWidget {
 
           const SizedBox(height: 32),
         ],
-      ),
-      floatingActionButton: paper.localPdfPath != null
-          ? FloatingActionButton.extended(
-              onPressed: () => _openReader(context, ref, paper),
-              icon: const Icon(Icons.menu_book),
-              label: const Text('Read'),
-            )
-          : null,
-    );
+      );
   }
 
   /// Opens the reader and refreshes the library on return so reading
@@ -424,5 +468,82 @@ class PaperDetailScreen extends ConsumerWidget {
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
+  }
+}
+
+/// Retraction / correction / preprint-superseded banner.
+class _UpdateBanner extends ConsumerWidget {
+  final PaperModel paper;
+
+  const _UpdateBanner({required this.paper});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final serious = paper.updateStatus == 'retraction' ||
+        paper.updateStatus == 'expression_of_concern';
+
+    final (String title, String body) = switch (paper.updateStatus) {
+      'retraction' => (
+          'This paper has been retracted',
+          'Crossref reports a retraction notice. Do not cite it as valid work.'
+        ),
+      'expression_of_concern' => (
+          'Expression of concern',
+          'The publisher has flagged concerns about this paper.'
+        ),
+      'correction' => (
+          'A correction was published',
+          'Check the correction notice before citing specifics.'
+        ),
+      'preprint_superseded' => (
+          'Published version available',
+          'This preprint has since been published in a journal.'
+        ),
+      _ => ('Publication update', 'Crossref reports an update for this DOI.'),
+    };
+
+    final color =
+        serious ? theme.colorScheme.error : theme.colorScheme.tertiary;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        border: Border.all(color: color),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(serious ? Icons.report : Icons.info_outline, color: color),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: theme.textTheme.titleSmall
+                        ?.copyWith(color: color, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 2),
+                Text(body, style: theme.textTheme.bodySmall),
+                if (paper.updateNoticeDoi != null)
+                  TextButton(
+                    style: TextButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                    onPressed: () => launchUrl(
+                      Uri.parse('https://doi.org/${paper.updateNoticeDoi}'),
+                      mode: LaunchMode.externalApplication,
+                    ),
+                    child: const Text('Read the notice'),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

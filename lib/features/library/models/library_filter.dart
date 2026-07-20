@@ -1,3 +1,5 @@
+import '../../../core/models/paper_model.dart';
+
 enum SortOption {
   dateAdded('Date added', 'date_added'),
   title('Title', 'title'),
@@ -15,6 +17,9 @@ class LibraryFilter {
   final String? yearFrom;
   final String? yearTo;
   final bool favoritesOnly;
+  final ReadStatus? readStatus;
+  final bool missingPdfOnly;
+  final bool needsReviewOnly;
   final SortOption sortBy;
   final bool sortDescending;
 
@@ -24,6 +29,9 @@ class LibraryFilter {
     this.yearFrom,
     this.yearTo,
     this.favoritesOnly = false,
+    this.readStatus,
+    this.missingPdfOnly = false,
+    this.needsReviewOnly = false,
     this.sortBy = SortOption.dateAdded,
     this.sortDescending = true,
   });
@@ -34,6 +42,9 @@ class LibraryFilter {
     String? yearFrom,
     String? yearTo,
     bool? favoritesOnly,
+    ReadStatus? readStatus,
+    bool? missingPdfOnly,
+    bool? needsReviewOnly,
     SortOption? sortBy,
     bool? sortDescending,
   }) {
@@ -43,6 +54,9 @@ class LibraryFilter {
       yearFrom: yearFrom ?? this.yearFrom,
       yearTo: yearTo ?? this.yearTo,
       favoritesOnly: favoritesOnly ?? this.favoritesOnly,
+      readStatus: readStatus ?? this.readStatus,
+      missingPdfOnly: missingPdfOnly ?? this.missingPdfOnly,
+      needsReviewOnly: needsReviewOnly ?? this.needsReviewOnly,
       sortBy: sortBy ?? this.sortBy,
       sortDescending: sortDescending ?? this.sortDescending,
     );
@@ -53,10 +67,46 @@ class LibraryFilter {
       tags.isNotEmpty ||
       yearFrom != null ||
       yearTo != null ||
-      favoritesOnly;
+      favoritesOnly ||
+      readStatus != null ||
+      missingPdfOnly ||
+      needsReviewOnly;
 
   LibraryFilter clearFilters() => LibraryFilter(
         sortBy: sortBy,
         sortDescending: sortDescending,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'collectionId': collectionId,
+        'tags': tags.toList(),
+        'yearFrom': yearFrom,
+        'yearTo': yearTo,
+        'favoritesOnly': favoritesOnly,
+        'readStatus': readStatus?.name,
+        'missingPdfOnly': missingPdfOnly,
+        'needsReviewOnly': needsReviewOnly,
+        'sortBy': sortBy.name,
+        'sortDescending': sortDescending,
+      };
+
+  static LibraryFilter fromJson(Map<String, dynamic> json) => LibraryFilter(
+        collectionId: json['collectionId'] as int?,
+        tags: ((json['tags'] as List<dynamic>?) ?? const [])
+            .map((t) => t as String)
+            .toSet(),
+        yearFrom: json['yearFrom'] as String?,
+        yearTo: json['yearTo'] as String?,
+        favoritesOnly: json['favoritesOnly'] as bool? ?? false,
+        readStatus: json['readStatus'] != null
+            ? ReadStatus.fromName(json['readStatus'] as String)
+            : null,
+        missingPdfOnly: json['missingPdfOnly'] as bool? ?? false,
+        needsReviewOnly: json['needsReviewOnly'] as bool? ?? false,
+        sortBy: SortOption.values.firstWhere(
+          (s) => s.name == json['sortBy'],
+          orElse: () => SortOption.dateAdded,
+        ),
+        sortDescending: json['sortDescending'] as bool? ?? true,
       );
 }

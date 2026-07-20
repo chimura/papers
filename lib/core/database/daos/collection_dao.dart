@@ -117,6 +117,59 @@ class CollectionDao {
     return rows.map((r) => r['paper_id'] as int).toList();
   }
 
+  /// Paper ids in [collectionId] **and every descendant collection**, so
+  /// filtering by a parent includes everything filed beneath it.
+  Future<Set<int>> getPaperIdsInSubtree(int collectionId) async {
+    final db = await _db;
+    final rows = await db.rawQuery('''
+      WITH RECURSIVE subtree(id) AS (
+        SELECT id FROM collections WHERE id = ?
+        UNION ALL
+        SELECT c.id FROM collections c JOIN subtree s ON c.parent_id = s.id
+      )
+      SELECT DISTINCT paper_id FROM paper_collections
+      WHERE collection_id IN (SELECT id FROM subtree)
+    ''', [collectionId]);
+    return rows.map((r) => r['paper_id'] as int).toSet();
+  }
+
+  /// True when [candidateParentId] is [collectionId] itself or one of its
+  /// descendants — used to reject re-parenting that would create a cycle.
+  Future<bool> wouldCreateCycle(int collectionId, int candidateParentId) async {
+    if (collectionId == candidateParentId) return true;
+    final db = await _db;
+    final rows = await db.rawQuery('''
+      WITH RECURSIVE subtree(id) AS (
+        SELECT id FROM collections WHERE id = ?
+        UNION ALL
+        SELECT c.id FROM collections c JOIN subtree s ON c.parent_id = s.id
+      )
+      SELECT 1 FROM subtree WHERE id = ? LIMIT 1
+    ''', [collectionId, candidateParentId]);
+    return rows.isNotEmpty;
+  }
+
+  Future<void> setParent(int collectionId, int? parentId) async {
+    final db = await _db;
+    await db.update('collections', {'parent_id': parentId},
+        where: 'id = ?', whereArgs: [collectionId]);
+  }
+
+  Future<void> addPapersToCollection(
+      List<int> paperIds, int collectionId) async {
+    if (paperIds.isEmpty) return;
+    final db = await _db;
+    await db.transaction((txn) async {
+      for (final paperId in paperIds) {
+        await txn.insert(
+          'paper_collections',
+          {'paper_id': paperId, 'collection_id': collectionId},
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+    });
+  }
+
   Future<Set<int>> getCollectionIdsForPaper(int paperId) async {
     final db = await _db;
     final rows = await db.query(

@@ -10,6 +10,8 @@ import '../../../core/database/database_provider.dart';
 import '../../../core/models/paper_model.dart';
 import '../../../core/router/app_router.dart';
 import '../../citations/services/citation_clipboard.dart';
+import '../../notes/providers/note_provider.dart';
+import '../../settings/models/app_settings.dart';
 import '../../settings/providers/settings_provider.dart';
 import '../models/annotation_model.dart';
 import '../providers/annotation_provider.dart';
@@ -39,6 +41,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   final _pdfController = PdfViewerController();
   PdfTextSelection? _lastTextSelection;
   bool _showSidePanel = true;
+  bool _hasSelection = false;
 
   Timer? _positionSaveTimer;
   int? _pendingPage;
@@ -247,6 +250,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         textSelectionParams: PdfTextSelectionParams(
           onTextSelectionChange: (textSelection) {
             _lastTextSelection = textSelection;
+            final has = textSelection.hasSelectedText;
+            if (has != _hasSelection && mounted) {
+              setState(() => _hasSelection = has);
+            }
           },
         ),
         pageOverlaysBuilder: (context, pageRect, page) {
@@ -284,16 +291,20 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       children: [
         viewer,
 
-        if (readerState.activeTool == ReaderTool.highlight)
+        // Contextual actions whenever text is selected — no need to arm a
+        // tool first.
+        if (_hasSelection)
           Positioned(
-            bottom: 8,
+            bottom: 12,
             left: 0,
             right: 0,
             child: Center(
-              child: FilledButton.icon(
-                onPressed: _createHighlightFromSelection,
-                icon: const Icon(Icons.highlight, size: 18),
-                label: const Text('Highlight selection'),
+              child: _SelectionToolbar(
+                colors: AnnotationToolbar.highlightColors,
+                onHighlight: (color) => _createHighlightFromSelection(color),
+                onCopy: _copySelection,
+                onCopyWithCitation: _copySelectionWithCitation,
+                onAddToNotebook: _addSelectionToNotebook,
               ),
             ),
           ),
@@ -312,7 +323,68 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   // ── Actions ──
 
-  Future<void> _createHighlightFromSelection() async {
+  /// Text of the current selection, or null when nothing is selected.
+  Future<String?> _selectedText() async {
+    final selection = _lastTextSelection;
+    if (selection == null || !selection.hasSelectedText) return null;
+    final text = await selection.getSelectedText();
+    return text.trim().isEmpty ? null : text;
+  }
+
+  Future<void> _copySelection() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final text = await _selectedText();
+    if (text == null) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    messenger.showSnackBar(const SnackBar(content: Text('Copied')));
+  }
+
+  /// Puts the quote plus an in-text citation and the full reference on the
+  /// clipboard, ready to paste into a draft.
+  Future<void> _copySelectionWithCitation() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final text = await _selectedText();
+    if (text == null) return;
+
+    final paper = widget.paper;
+    final styleEnum = ref.read(settingsProvider).value?.defaultCitationStyle ??
+        DefaultCitationStyle.apa;
+    final style = citationStyleFor(styleEnum);
+    final page = ref.read(readerStateProvider).currentPage + 1;
+
+    final author = paper.authors.isEmpty
+        ? 'Anon.'
+        : paper.authors.length == 1
+            ? paper.authors.first.familyName
+            : paper.authors.length == 2
+                ? '${paper.authors[0].familyName} & ${paper.authors[1].familyName}'
+                : '${paper.authors.first.familyName} et al.';
+    final inText = '($author, ${paper.year ?? 'n.d.'}, p. $page)';
+
+    await Clipboard.setData(ClipboardData(
+      text: '"${text.replaceAll('\n', ' ').trim()}" $inText\n\n'
+          '${style.format(paper)}',
+    ));
+    messenger.showSnackBar(
+        const SnackBar(content: Text('Quote and citation copied')));
+  }
+
+  Future<void> _addSelectionToNotebook() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final paperId = widget.paper.id;
+    final text = await _selectedText();
+    if (text == null || paperId == null) return;
+
+    await ref.read(noteActionsProvider).appendQuote(
+          paperId: paperId,
+          quote: text.replaceAll('\n', ' ').trim(),
+          page: ref.read(readerStateProvider).currentPage + 1,
+        );
+    messenger.showSnackBar(
+        const SnackBar(content: Text('Added to this paper\'s notes')));
+  }
+
+  Future<void> _createHighlightFromSelection([Color? overrideColor]) async {
     final textSelection = _lastTextSelection;
     if (textSelection == null || !textSelection.hasSelectedText) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -324,7 +396,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     final paperId = widget.paper.id;
     if (paperId == null) return;
 
-    final readerState = ref.read(readerStateProvider);
+    final highlightColor =
+        overrideColor ?? ref.read(readerStateProvider).highlightColor;
     final selectedText = await textSelection.getSelectedText();
     final ranges = await textSelection.getSelectedTextRanges();
 
@@ -354,7 +427,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
               width: maxX - minX,
               height: maxY - minY,
               selectedText: selectedText,
-              color: readerState.highlightColor,
+              color: highlightColor,
             );
       }
     }
@@ -486,6 +559,79 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         Navigator.pop(context);
         _pdfController.goToPage(pageNumber: annotation.page);
       },
+    );
+  }
+}
+
+/// Floating actions shown while text is selected in the PDF.
+class _SelectionToolbar extends StatelessWidget {
+  final List<Color> colors;
+  final void Function(Color) onHighlight;
+  final VoidCallback onCopy;
+  final VoidCallback onCopyWithCitation;
+  final VoidCallback onAddToNotebook;
+
+  const _SelectionToolbar({
+    required this.colors,
+    required this.onHighlight,
+    required this.onCopy,
+    required this.onCopyWithCitation,
+    required this.onAddToNotebook,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Material(
+      elevation: 6,
+      borderRadius: BorderRadius.circular(24),
+      color: theme.colorScheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final color in colors)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 3),
+                child: Tooltip(
+                  message: 'Highlight',
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () => onHighlight(color),
+                    child: Container(
+                      width: 26,
+                      height: 26,
+                      decoration: BoxDecoration(
+                        color: color,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                            color: theme.colorScheme.outlineVariant),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            const VerticalDivider(width: 14, indent: 4, endIndent: 4),
+            IconButton(
+              icon: const Icon(Icons.copy, size: 20),
+              tooltip: 'Copy',
+              onPressed: onCopy,
+            ),
+            IconButton(
+              icon: const Icon(Icons.format_quote, size: 20),
+              tooltip: 'Copy with citation',
+              onPressed: onCopyWithCitation,
+            ),
+            IconButton(
+              icon: const Icon(Icons.note_add_outlined, size: 20),
+              tooltip: 'Add to notes',
+              onPressed: onAddToNotebook,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

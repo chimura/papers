@@ -33,6 +33,15 @@ class BibtexImportNotifier extends Notifier<BibtexImportState> {
     }
   }
 
+  /// Used by the RIS file path, which parses elsewhere but shares this
+  /// preview list.
+  void setPapers(List<PaperModel> papers) {
+    state = BibtexImportState(
+      papers: papers,
+      error: papers.isEmpty ? 'No entries found in that file' : null,
+    );
+  }
+
   void reset() {
     state = const BibtexImportState();
   }

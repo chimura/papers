@@ -1,7 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/daos/collection_dao.dart';
+import '../../../core/database/daos/smart_collection_dao.dart';
+import '../../../core/models/paper_model.dart';
 import '../models/library_filter.dart';
 import '../providers/collection_providers.dart';
 import '../providers/library_filter_provider.dart';
@@ -50,6 +54,51 @@ class FilterDrawer extends ConsumerWidget {
                         .read(libraryFilterProvider.notifier)
                         .toggleFavorites(),
                   ),
+                  SwitchListTile(
+                    title: const Text('Missing PDF'),
+                    secondary: const Icon(Icons.picture_as_pdf_outlined),
+                    value: filter.missingPdfOnly,
+                    onChanged: (_) => ref
+                        .read(libraryFilterProvider.notifier)
+                        .toggleMissingPdf(),
+                  ),
+                  SwitchListTile(
+                    title: const Text('Needs review'),
+                    subtitle: const Text('Auto-imported, unverified metadata'),
+                    secondary: const Icon(Icons.fiber_new),
+                    value: filter.needsReviewOnly,
+                    onChanged: (_) => ref
+                        .read(libraryFilterProvider.notifier)
+                        .toggleNeedsReview(),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Reading status
+                  Text('Reading status', style: theme.textTheme.titleSmall),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('Any'),
+                        selected: filter.readStatus == null,
+                        onSelected: (_) => ref
+                            .read(libraryFilterProvider.notifier)
+                            .setReadStatus(null),
+                      ),
+                      ...ReadStatus.values.map((status) => ChoiceChip(
+                            label: Text(status.label),
+                            selected: filter.readStatus == status,
+                            onSelected: (_) => ref
+                                .read(libraryFilterProvider.notifier)
+                                .setReadStatus(status),
+                          )),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Saved searches
+                  _SmartCollectionsSection(currentFilter: filter),
                   const SizedBox(height: 16),
 
                   // Sort
@@ -179,6 +228,36 @@ class FilterDrawer extends ConsumerWidget {
     );
   }
 
+  Future<String?> _promptForName(
+      BuildContext context, String title, String label) async {
+    final controller = TextEditingController();
+    final value = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(labelText: label),
+          onSubmitted: (v) => Navigator.pop(dialogContext, v),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    final trimmed = value?.trim() ?? '';
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
   Future<void> _createCollection(BuildContext context, WidgetRef ref) async {
     final controller = TextEditingController();
     final name = await showDialog<String>(
@@ -241,5 +320,102 @@ class FilterDrawer extends ConsumerWidget {
     }
     ref.invalidate(collectionsProvider);
     ref.invalidate(collectionPaperIdsProvider);
+  }
+}
+
+final smartCollectionDaoProvider =
+    Provider<SmartCollectionDao>((ref) => SmartCollectionDao());
+
+final smartCollectionsProvider =
+    FutureProvider<List<SmartCollectionRecord>>((ref) async {
+  return ref.read(smartCollectionDaoProvider).getAll();
+});
+
+/// Saved searches: the current filter state, stored by name and restorable
+/// with one tap.
+class _SmartCollectionsSection extends ConsumerWidget {
+  final LibraryFilter currentFilter;
+
+  const _SmartCollectionsSection({required this.currentFilter});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final saved = ref.watch(smartCollectionsProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text('Saved searches', style: theme.textTheme.titleSmall),
+            const Spacer(),
+            IconButton(
+              icon: const Icon(Icons.bookmark_add_outlined, size: 20),
+              tooltip: 'Save current filters',
+              visualDensity: VisualDensity.compact,
+              onPressed: currentFilter.isActive
+                  ? () => _save(context, ref)
+                  : null,
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        saved.when(
+          loading: () => const SizedBox.shrink(),
+          error: (e, _) => Text('Error: $e', style: theme.textTheme.bodySmall),
+          data: (records) {
+            if (records.isEmpty) {
+              return Text(
+                currentFilter.isActive
+                    ? 'Tap the bookmark to save these filters.'
+                    : 'Set some filters, then save them here.',
+                style: theme.textTheme.bodySmall,
+              );
+            }
+            return Wrap(
+              spacing: 8,
+              children: records
+                  .map((record) => GestureDetector(
+                        onLongPress: () => _delete(context, ref, record),
+                        child: ActionChip(
+                          avatar: const Icon(Icons.bolt, size: 16),
+                          label: Text(record.name),
+                          tooltip: 'Long-press to delete',
+                          onPressed: () {
+                            ref.read(libraryFilterProvider.notifier).replace(
+                                  LibraryFilter.fromJson(
+                                      jsonDecode(record.filterJson)
+                                          as Map<String, dynamic>),
+                                );
+                            Navigator.of(context).maybePop();
+                          },
+                        ),
+                      ))
+                  .toList(),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Future<void> _save(BuildContext context, WidgetRef ref) async {
+    final name = await const FilterDrawer()
+        ._promptForName(context, 'Save current filters', 'Name');
+    if (name == null) return;
+
+    await ref.read(smartCollectionDaoProvider).insert(SmartCollectionRecord(
+          name: name,
+          filterJson: jsonEncode(currentFilter.toJson()),
+          createdAt: DateTime.now(),
+        ));
+    ref.invalidate(smartCollectionsProvider);
+  }
+
+  Future<void> _delete(
+      BuildContext context, WidgetRef ref, SmartCollectionRecord r) async {
+    await ref.read(smartCollectionDaoProvider).delete(r.id!);
+    ref.invalidate(smartCollectionsProvider);
   }
 }

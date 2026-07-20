@@ -6,7 +6,9 @@ import '../providers/reader_provider.dart';
 class AnnotationToolbar extends ConsumerWidget {
   const AnnotationToolbar({super.key});
 
-  static const _highlightColors = [
+  /// Shared with the reader's selection toolbar so both offer the same
+  /// palette.
+  static const highlightColors = [
     Color(0xFFFFFF00), // Yellow
     Color(0xFF00FF00), // Green
     Color(0xFF00BFFF), // Blue
@@ -54,7 +56,7 @@ class AnnotationToolbar extends ConsumerWidget {
 
             // Color picker (visible when highlight tool is active)
             if (readerState.activeTool == ReaderTool.highlight)
-              ...(_highlightColors.map((color) => Padding(
+              ...(highlightColors.map((color) => Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 2),
                     child: GestureDetector(
                       onTap: () => ref

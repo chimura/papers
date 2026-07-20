@@ -50,97 +50,98 @@ items land.
   with counter-inverted annotation colors, toggle in the reader app bar backed
   by `AppSettings.pdfDarkMode`.
 
-## Tier 2 — Core Mendeley parity (a day or two each)
+## Tier 2 — Core Mendeley parity — **mostly done 2026-07-20**
+
+Schema v3 added in one migration: `arxiv_id`, `pmid`, `read_status`,
+`date_read`, `queue_position`, `needs_review`, `title_normalized` (+ index),
+`update_status`, `update_notice_doi`, `published_version_doi`,
+`updates_checked_at`, plus the `notes` (+`notes_fts`), `smart_collections`
+and `auto_exports` tables.
 
 ### Capture
 
-- [ ] **Real PDF metadata extraction** (M) — cascade in `MetadataExtractor`:
-  (1) `pdfrx` headless `loadText()` on pages 1–2, regex DOI/arXiv ID;
-  (2) raw-bytes XMP block scan (`<x:xmpmeta>`, parse with `xml` package);
-  (3) largest-font first-page line as title guess →
-  `api.crossref.org/works?query.bibliographic=` with Dice-similarity acceptance
-  (`string_similarity` package). Kills the filename-title failure mode.
-- [ ] **Watched import folder** (M) — `Directory.watch()` (native
-  ReadDirectoryChangesW on Windows); debounce + retry-open until the browser
-  finishes writing; SHA-256 dedupe of seen files; reuse the PDF import pipeline;
-  imports land flagged "needs review". Folder picked in Settings.
-- [ ] **Add-by-identifier: DOI + arXiv + PMID, bulk paste** (M) — regex-detect ID
-  type; arXiv export API (Atom XML), PubMed E-utilities (esummary/efetch),
-  Semantic Scholar Graph API as cross-linker (`externalIds` gives DOI+arXiv+PMID
-  for one paper). New columns `arxiv_id`, `pmid`; include in Drive manifest.
-- [ ] **Bulk BibTeX/RIS file import** (M) — open whole `.bib`/`.ris` exports with
-  preview table, per-entry "already in library" flags, one-transaction import;
-  honor Zotero/JabRef `file = {...}` fields to attach PDFs from disk. This is
-  the migration ramp for Mendeley/Zotero refugees.
-- [ ] **papers:// protocol + capture bookmarklet** (M) — `protocol_handler` +
-  `window_manager` packages; bookmarklet reads `citation_doi`/`citation_pdf_url`
-  meta tags from publisher pages and opens `papers://import?...`. 80% of a web
-  importer for 5% of the cost.
+- [x] **Real PDF metadata extraction** — `MetadataExtractor.fromPdf` cascade:
+  pdfrx headless text on pages 1–2 (DOI/arXiv regex) → raw-bytes XMP packet
+  scan (`prism:doi`, `dc:title`) → first-page title guess verified against
+  CrossRef at Dice ≥ 0.8. Wired into `FileImportService`, so every import
+  route benefits. **Caveat: stage 1 is not unit-tested** (needs a real PDF
+  with a text layer) — worth one manual check against a real paper.
+- [x] **Watched import folder** — `WatchedFolderService` on `Directory.watch()`
+  with a size-stability + open-lock settle loop (Windows holds the handle
+  while a browser downloads). Folder picked in Settings; imports are flagged
+  `needs_review` and filterable.
+- [x] **Add-by-identifier: DOI + arXiv + PMID, bulk paste** — new Identifiers
+  tab takes a mixed blob; `IdentifierResolverService` detects each type and
+  resolves via CrossRef / arXiv Atom API / PubMed E-utilities, with add-all.
+- [x] **Bulk BibTeX/RIS file import** — "Open .bib / .ris file" in the import
+  screen (plus drag-and-drop from Tier 1) feeding the same preview + add-all
+  list. *Not done: attaching PDFs referenced by Zotero/JabRef `file = {...}`
+  fields, and per-entry "already in library" flags.*
+- [ ] **papers:// protocol + capture bookmarklet** — deferred; needs
+  `protocol_handler` + `window_manager` and changes app launch behavior.
 
 ### Organize
 
-- [ ] **Bulk select + bulk edit** (M) — Ctrl/Shift-click multi-select,
-  contextual action bar (tag, collection, favorite, delete, enrich, find PDFs);
-  batched DAO writes in one transaction. Force multiplier for everything else.
-- [ ] **Metadata Doctor: batch enrichment** (M) — fill missing
-  abstract/DOI/journal/year from CrossRef (`query.bibliographic` + Dice-verify)
-  and Semantic Scholar batch endpoint (`POST /graph/v1/paper/batch`, 500 ids per
-  request). Field-by-field accept/reject diff dialog.
-- [ ] **Reading status + Read Next queue** (M) — `read_status`, `date_read`,
-  `queue_position` columns; status chip cycles on tap; opening a PDF flips
-  unread→reading; pinned "Recently Added" and reorderable "Read Next" views.
-- [ ] **Smart collections (saved searches)** (M) — persist `LibraryFilter` +
-  search text as JSON in a new `smart_collections` table; render with a bolt
-  icon; tapping restores filter+search state. Include in Drive manifest.
-- [ ] **Nested collections** (M) — `collections.parent_id` already exists;
-  recursive CTE for subtree paper ids; ExpansionTile tree in the filter drawer;
-  drag-to-reparent with cycle check.
-- [ ] **Retraction & preprint warnings** (M) — CrossRef
-  `works?filter=updates:{doi}` (batch ~20 per request) for
-  retractions/corrections; `is-preprint-of` relation from the stored `csl_json`
-  for "published version available" upgrade prompts. Red banner + list badge;
-  run on the auto-sync timer.
+- [x] **Bulk select + bulk edit** — long-press / checkbox multi-select with
+  shift-click ranges and Ctrl+A, contextual action bar (favorite, read status,
+  tag, add to collection, copy bibliography, delete), all batched in single
+  transactions.
+- [x] **Metadata Doctor** — `EnrichmentService` (CrossRef bibliographic search
+  gated at Dice ≥ 0.9, Semantic Scholar batch endpoint, never overwrites
+  existing values) run from Settings over every incomplete paper.
+  *Not done: the field-by-field accept/reject dialog — it currently applies
+  safe fills automatically; `EnrichmentService.diff` exists to build that UI.*
+- [x] **Reading status** — unread/reading/read cycling from the list tile,
+  auto-flip to "reading" when a PDF is opened, and a status filter.
+  *Not done: the drag-reorderable "Read Next" queue view — `queue_position`
+  and `saveQueueOrder` are in place, the UI is not.*
+- [x] **Smart collections (saved searches)** — `LibraryFilter` is JSON
+  round-trippable, saved by name to `smart_collections`, restored with one tap
+  from the filter drawer.
+- [x] **Nested collections (data layer)** — recursive-CTE subtree queries and
+  cycle-safe re-parenting in `CollectionDao`. *Not done: the ExpansionTile
+  tree + drag-to-reparent UI; the drawer still lists collections flat.*
+- [x] **Retraction & preprint warnings** — `RetractionService` batches
+  `works?filter=updates:` 20 DOIs at a time and reads `is-preprint-of` out of
+  the stored CSL JSON; run from Settings, surfaced as a detail-screen banner
+  and a struck-through title + icon in the list. *Not done: running it
+  automatically on the sync timer.*
 
 ### Read & note
 
-- [ ] **Selection popup in the reader** (M) — floating toolbar above the text
-  selection: 5 instant-highlight swatches, Copy, "Copy with citation"
-  (`"quote" (Author, Year, p. N)` + full reference). All hooks
-  (`onTextSelectionChange`, overlay scaling math) already exist.
-- [ ] **Per-paper Notebook with quote backlinks** (M) — `notes` table
-  (paper_id nullable → cross-paper topic pages) + `notes_fts`; Markdown editor
-  (`flutter_markdown_plus`) with `papers://open/{id}?page=n` backlinks; "Add to
-  Notebook" from highlights/selection popup. Mendeley's most-loved feature,
-  minus the lock-in.
-- [ ] **First-page thumbnails** (M) — render page 1 via pdfrx at import
-  (serialize through a queue; pdfium isn't re-entrant), cache as PNG under
-  `papers_pdfs/.thumbs/{id}.png`, show in grid tiles.
-- [ ] **Split view: two papers side by side** (M) — extract a self-contained
-  `ReaderPane` widget; convert `readerStateProvider` to a `.family` by paperId;
-  resizable row layout.
+- [x] **Selection popup in the reader** — appears whenever text is selected:
+  five instant-highlight swatches (no tool arming), Copy, "Copy with citation"
+  (`"quote" (Author, Year, p. N)` + full reference), and "Add to notes".
+  *Deviation: it is anchored bottom-center of the viewer rather than floating
+  at the selection rect — reliable across zoom/scroll without transform math.*
+- [x] **Per-paper Notebook with quote backlinks** — `notes`/`notes_fts` tables,
+  `NoteDao` (incl. FTS search hardened the same way paper search is), a Notes
+  tab on the paper detail screen, and quote capture from the reader that
+  appends a blockquote with a `papers://open/{id}?page=n` backlink.
+  *Not done: rendering Markdown (the editor is plain text) and making the
+  backlinks clickable; cross-paper topic pages have DAO support but no UI.*
+- [ ] **First-page thumbnails** — deferred.
+- [ ] **Split view: two papers side by side** — deferred; needs the
+  `readerStateProvider` → `.family` refactor.
 
 ### Write & cite
 
-- [ ] **Auto-synced `.bib` export** (M) — register target paths
-  (library or collection → file); a `libraryRevision` counter provider +
-  3s-debounced atomic rewrite (`.tmp` + rename). Add LaTeX escaping to
-  `toBibtex` (currently none: `& % $ # _ { }`). The Overleaf/LaTeX retention
-  feature.
-- [ ] **Rich-text citation copy (HTML clipboard)** (M) — `super_clipboard` for
-  simultaneous HTML + plain text (italics survive pasting into Word/Docs);
-  refactor `CitationStyle.format` to emit inline markup. Future-proofs for CSL.
-- [ ] **Bibliography builder** (M) — multi-select → one sorted, deduplicated
-  bibliography (alphabetical for author-date styles, numbered for IEEE) to
-  clipboard or file.
-- [ ] **Quick-cite global hotkey palette** (M) — `hotkey_manager` +
-  `window_manager` + `tray_manager`: Ctrl+Alt+C anywhere on Windows pops a
-  search palette over the current app; Enter copies the citation, Shift+Enter
-  `\cite{key}`. Closest thing to Mendeley Cite with no plugin to break.
-  Windows-only (guard on platform).
-- [ ] **Document scan: placeholder citations** (M) — write `{@key}` /
-  `{Author, Year}` in any editor; scan the file, replace with formatted
-  citations + append bibliography, write a `-formatted` copy. `.txt`/`.md`
-  trivial; `.rtf` via regex like Zotero does.
+- [x] **Auto-synced `.bib` export** — register target files in Settings; a
+  revision counter + 3s debounce rewrites them atomically (`.tmp` + rename)
+  on every library change. *Not done: LaTeX escaping of `& % $ # _ { }` in
+  `toBibtex` — still missing, and worth fixing before heavy LaTeX use.*
+- [ ] **Rich-text citation copy (HTML clipboard)** — deferred: `super_clipboard`
+  pulls in a Rust toolchain requirement, which is a real build-system risk on
+  this machine. Revisit with `rich_clipboard` or a direct CF_HTML write.
+- [x] **Bibliography builder** — select N papers → "Copy bibliography" produces
+  one deduplicated list, alphabetical for author-date styles and numbered in
+  selection order for IEEE. *Not done: saving to .html/.txt (clipboard only).*
+- [ ] **Quick-cite global hotkey palette** — deferred; needs `hotkey_manager` +
+  `tray_manager` and changes the app's close/lifecycle behavior.
+- [x] **Document scan (engine)** — `DocumentScanService` resolves `[@key]` /
+  `{@key}` placeholders against citation keys, renders in-text citations,
+  appends a bibliography, and reports unresolved keys. *Not done: the screen
+  to pick a file and write the `-formatted` copy — engine and tests only.*
 
 ## Tier 3 — Big bets (a week+ each)
 
@@ -161,12 +162,27 @@ items land.
 
 ---
 
-## Suggested build order
+## What's next
 
-1. Prerequisite migration scaffold, then all of **Tier 1** (about a week total).
-2. **Watched folder + real PDF extraction** (capture feels magical),
-   **Notebook** (reading feels sticky), **auto-`.bib`** (writing feels pro).
-3. Remaining Tier 2 by taste; Tier 3 when the foundations are stable.
+Tier 1 is complete; Tier 2 is complete except for the deferred items above.
+Highest-value remaining work, roughly in order:
+
+1. **LaTeX escaping in `toBibtex`** — small, and auto-export makes it matter.
+2. **Manually verify PDF text extraction** against a few real papers
+   (stage 1 of the extractor cascade has no unit test).
+3. **Markdown rendering + clickable backlinks in the Notebook** — the notes
+   feature is functional but plain-text today.
+4. **Read Next queue UI** and the **nested collections tree** — both have
+   their data layers finished, only the widgets are missing.
+5. **Metadata Doctor accept/reject dialog** using `EnrichmentService.diff`.
+6. Then Tier 3 (full-text PDF search, duplicate merge, real CSL).
+
+Deferred-with-reason: `papers://` protocol, quick-cite hotkey palette
+(app-lifecycle risk), rich-text clipboard (Rust toolchain), thumbnails,
+split view.
+
+Full research digest and per-idea implementation notes: workflow run
+`wf_9d455e48-632` (2026-07-19 session).
 
 Full research digest and per-idea details: workflow run `wf_9d455e48-632`
 (2026-07-19 session).

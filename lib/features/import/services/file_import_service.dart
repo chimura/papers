@@ -24,19 +24,29 @@ class FileImportService {
     return pdfsDir;
   }
 
-  Future<PaperModel> importPdf(String sourcePath) async {
+  /// [needsReview] marks unattended imports (watched folder) so the user can
+  /// find and verify them later.
+  Future<PaperModel> importPdf(String sourcePath,
+      {bool needsReview = false}) async {
     final pdfsDir = await pdfsDirectory();
     final destPath = _uniqueDestination(pdfsDir, p.basename(sourcePath));
     await File(sourcePath).copy(destPath);
 
     final filename = p.basename(sourcePath);
-    final metadataPaper = await _extractor.fromFilename(filename);
+    // Read the PDF itself (embedded DOI/arXiv id, XMP, title lookup) and
+    // only fall back to guessing from the filename.
+    final metadataPaper = await _extractor.fromPdf(destPath) ??
+        await _extractor.fromFilename(filename);
 
     final now = DateTime.now();
-    return metadataPaper?.copyWith(localPdfPath: destPath) ??
+    return metadataPaper?.copyWith(
+          localPdfPath: destPath,
+          needsReview: needsReview,
+        ) ??
         PaperModel(
           title: p.basenameWithoutExtension(filename),
           localPdfPath: destPath,
+          needsReview: needsReview,
           dateAdded: now,
           dateModified: now,
         );

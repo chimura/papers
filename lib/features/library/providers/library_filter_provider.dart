@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/models/paper_model.dart';
 import '../models/library_filter.dart';
 
 final libraryFilterProvider =
@@ -48,6 +49,34 @@ class LibraryFilterNotifier extends Notifier<LibraryFilter> {
 
   void toggleSortDirection() {
     state = state.copyWith(sortDescending: !state.sortDescending);
+  }
+
+  /// Null clears the status filter, so this cannot use copyWith.
+  void setReadStatus(ReadStatus? status) {
+    state = LibraryFilter(
+      collectionId: state.collectionId,
+      tags: state.tags,
+      yearFrom: state.yearFrom,
+      yearTo: state.yearTo,
+      favoritesOnly: state.favoritesOnly,
+      readStatus: status,
+      missingPdfOnly: state.missingPdfOnly,
+      needsReviewOnly: state.needsReviewOnly,
+      sortBy: state.sortBy,
+      sortDescending: state.sortDescending,
+    );
+  }
+
+  void toggleMissingPdf() {
+    state = state.copyWith(missingPdfOnly: !state.missingPdfOnly);
+  }
+
+  void toggleNeedsReview() {
+    state = state.copyWith(needsReviewOnly: !state.needsReviewOnly);
+  }
+
+  void replace(LibraryFilter filter) {
+    state = filter;
   }
 
   void clearAll() {

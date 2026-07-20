@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../core/auth/auth_provider.dart';
+import '../../../core/database/database_provider.dart';
 import '../../../core/drive/drive_provider.dart';
 import '../../../core/drive/drive_sync_service.dart';
 import '../../../core/models/paper_model.dart';
@@ -22,6 +23,8 @@ import '../providers/collection_providers.dart';
 import '../providers/library_filter_provider.dart';
 import '../providers/library_provider.dart';
 import '../providers/library_search_provider.dart';
+import '../providers/selection_provider.dart';
+import '../widgets/bulk_action_bar.dart';
 import '../widgets/filter_drawer.dart';
 import '../widgets/paper_grid_tile.dart';
 import '../widgets/paper_list_tile.dart';
@@ -68,6 +71,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     final searchResults = ref.watch(searchResultsProvider);
     final isWide = MediaQuery.sizeOf(context).width >= kDesktopBreakpoint;
     final selectedPaper = ref.watch(selectedPaperProvider);
+    final selection = ref.watch(selectionProvider);
 
     // Notify when a sync finishes.
     ref.listen(syncStateProvider, (previous, next) {
@@ -96,7 +100,17 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         const SingleActivator(LogicalKeyboardKey.keyN, meta: true): () =>
             _openImport(context),
         const SingleActivator(LogicalKeyboardKey.escape): () {
-          if (_isSearching) _toggleSearch();
+          if (ref.read(selectionProvider).isNotEmpty) {
+            ref.read(selectionProvider.notifier).clear();
+          } else if (_isSearching) {
+            _toggleSearch();
+          }
+        },
+        const SingleActivator(LogicalKeyboardKey.keyA, control: true): () {
+          final visible = _visiblePaperIds();
+          if (visible.isNotEmpty) {
+            ref.read(selectionProvider.notifier).selectAll(visible);
+          }
         },
         const SingleActivator(LogicalKeyboardKey.keyC,
             control: true, shift: true): () {
@@ -126,52 +140,59 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           child: Stack(
             children: [
               Scaffold(
-          appBar: AppBar(
-            title: _isSearching
-                ? TextField(
-                    controller: _searchController,
-                    focusNode: _searchFocusNode,
-                    autofocus: true,
-                    decoration: const InputDecoration(
-                      hintText: 'Search papers...',
-                      border: InputBorder.none,
-                      filled: false,
-                    ),
-                    onChanged: (value) =>
-                        ref.read(searchQueryProvider.notifier).update(value),
-                  )
-                : const Text('Library'),
-            actions: [
-              _SyncButton(),
-              IconButton(
-                icon: Icon(_isSearching ? Icons.close : Icons.search),
-                tooltip: _isSearching ? 'Close search' : 'Search (Ctrl+F)',
-                onPressed: _toggleSearch,
-              ),
-              _buildSortMenu(filter),
-              Builder(
-                builder: (context) => IconButton(
-                  icon: Badge(
-                    isLabelVisible: filter.isActive,
-                    child: const Icon(Icons.filter_list),
-                  ),
-                  tooltip: 'Filters',
-                  onPressed: () => Scaffold.of(context).openEndDrawer(),
-                ),
-              ),
-            ],
-          ),
-          endDrawer: const FilterDrawer(),
-          body: _isSearching && searchQuery.isNotEmpty
-              ? _buildSearchResults(theme, searchResults, isWide)
-              : isWide
-                  ? _buildWideLayout(theme, libraryState, filter, selectedPaper)
-                  : _buildNarrowLayout(theme, libraryState, filter),
-                floatingActionButton: FloatingActionButton(
-                  onPressed: () => _openImport(context),
-                  tooltip: 'Import paper (Ctrl+N)',
-                  child: const Icon(Icons.add),
-                ),
+                appBar: selection.isNotEmpty
+                    ? const BulkActionBar()
+                    : AppBar(
+                        title: _isSearching
+                            ? TextField(
+                                controller: _searchController,
+                                focusNode: _searchFocusNode,
+                                autofocus: true,
+                                decoration: const InputDecoration(
+                                  hintText: 'Search papers...',
+                                  border: InputBorder.none,
+                                  filled: false,
+                                ),
+                                onChanged: (value) => ref
+                                    .read(searchQueryProvider.notifier)
+                                    .update(value),
+                              )
+                            : const Text('Library'),
+                        actions: [
+                          _SyncButton(),
+                          IconButton(
+                            icon: Icon(_isSearching ? Icons.close : Icons.search),
+                            tooltip:
+                                _isSearching ? 'Close search' : 'Search (Ctrl+F)',
+                            onPressed: _toggleSearch,
+                          ),
+                          _buildSortMenu(filter),
+                          Builder(
+                            builder: (context) => IconButton(
+                              icon: Badge(
+                                isLabelVisible: filter.isActive,
+                                child: const Icon(Icons.filter_list),
+                              ),
+                              tooltip: 'Filters',
+                              onPressed: () => Scaffold.of(context).openEndDrawer(),
+                            ),
+                          ),
+                        ],
+                      ),
+                endDrawer: const FilterDrawer(),
+                body: _isSearching && searchQuery.isNotEmpty
+                    ? _buildSearchResults(theme, searchResults, isWide)
+                    : isWide
+                        ? _buildWideLayout(
+                            theme, libraryState, filter, selectedPaper)
+                        : _buildNarrowLayout(theme, libraryState, filter),
+                floatingActionButton: selection.isNotEmpty
+                    ? null
+                    : FloatingActionButton(
+                        onPressed: () => _openImport(context),
+                        tooltip: 'Import paper (Ctrl+N)',
+                        child: const Icon(Icons.add),
+                      ),
               ),
               if (_dragging)
                 Positioned.fill(
@@ -384,6 +405,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               final paper = papers[index];
               final isSelected = selectedPaperId != null &&
                   paper.id == selectedPaperId;
+              final selection = ref.watch(selectionProvider);
+              final inSelectionMode = selection.isNotEmpty;
 
               return Container(
                 color: isSelected
@@ -391,7 +414,28 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                     : null,
                 child: PaperListTile(
                   paper: paper,
-                  onTap: () => _onPaperTap(context, paper),
+                  selected: inSelectionMode
+                      ? selection.contains(paper.id)
+                      : null,
+                  onSelectedChanged: paper.id == null
+                      ? null
+                      : (_) => ref
+                          .read(selectionProvider.notifier)
+                          .toggle(paper.id!),
+                  onTap: () {
+                    if (inSelectionMode) {
+                      if (paper.id != null) _selectWithModifiers(paper.id!);
+                    } else {
+                      _onPaperTap(context, paper);
+                    }
+                  },
+                  onLongPress: paper.id == null
+                      ? null
+                      : () => ref
+                          .read(selectionProvider.notifier)
+                          .toggle(paper.id!),
+                  onStatusTap: () =>
+                      ref.read(libraryProvider.notifier).cycleReadStatus(paper),
                   onFavoriteToggle: () {
                     if (paper.id != null) {
                       ref
@@ -432,9 +476,36 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   }
 
   void _openReader(PaperModel paper) {
+    if (paper.id != null) {
+      ref.read(paperDaoProvider).markReadingIfUnread(paper.id!);
+    }
     Navigator.of(context)
         .push(MaterialPageRoute(builder: (_) => ReaderScreen(paper: paper)))
         .then((_) => ref.read(libraryProvider.notifier).refresh());
+  }
+
+  /// Shift extends the selection from the last clicked row; a plain click
+  /// toggles just this one.
+  void _selectWithModifiers(int paperId) {
+    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+    final shiftHeld = pressed.contains(LogicalKeyboardKey.shiftLeft) ||
+        pressed.contains(LogicalKeyboardKey.shiftRight);
+    final notifier = ref.read(selectionProvider.notifier);
+    if (shiftHeld) {
+      notifier.selectRangeTo(paperId, _visiblePaperIds());
+    } else {
+      notifier.toggle(paperId);
+    }
+  }
+
+  /// Ids currently shown in the list, in display order — the basis for
+  /// Ctrl+A and shift-click range selection.
+  List<int> _visiblePaperIds() {
+    final papers = ref.read(libraryProvider).value ?? const <PaperModel>[];
+    return _applyFilters(papers, ref.read(libraryFilterProvider))
+        .map((p) => p.id)
+        .whereType<int>()
+        .toList();
   }
 
   // ── Search results ──
@@ -576,6 +647,19 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
     if (filter.favoritesOnly) {
       result = result.where((p) => p.isFavorite).toList();
+    }
+
+    if (filter.readStatus != null) {
+      result =
+          result.where((p) => p.readStatus == filter.readStatus).toList();
+    }
+
+    if (filter.missingPdfOnly) {
+      result = result.where((p) => p.localPdfPath == null).toList();
+    }
+
+    if (filter.needsReviewOnly) {
+      result = result.where((p) => p.needsReview).toList();
     }
 
     if (filter.tags.isNotEmpty) {

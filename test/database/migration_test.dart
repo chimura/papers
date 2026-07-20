@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:papers/core/database/app_database.dart';
+import 'package:papers/core/database/daos/note_dao.dart';
 import 'package:papers/core/database/daos/paper_dao.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -108,7 +109,64 @@ void main() {
     expect(updated.bibtexKey, 'legacy2020');
     expect(updated.bibtexKeyPinned, isTrue);
 
+    // v3 columns exist with sane defaults and the title was backfilled.
+    expect(updated.readStatus, ReadStatus.unread);
+    expect(updated.needsReview, isFalse);
+    expect(updated.arxivId, isNull);
+    final rows = await (await appDatabase.database)
+        .query('papers', columns: ['title_normalized']);
+    expect(rows.first['title_normalized'], 'premigration paper');
+
+    // v3 tables exist and are usable.
+    await dao.setReadStatus(updated.id!, ReadStatus.read);
+    expect((await dao.getPaperById(updated.id!))!.readStatus, ReadStatus.read);
+
+    final noteDao = NoteDao(appDatabase: appDatabase);
+    final noteId = await noteDao.insert(NoteRecord(
+      paperId: updated.id,
+      title: 'After migration',
+      bodyMd: 'still here',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    ));
+    expect((await noteDao.getById(noteId))?.bodyMd, 'still here');
+    expect(await noteDao.search('still'), hasLength(1));
+
     await appDatabase.close();
     await dir.delete(recursive: true);
+  });
+
+  test('a fresh database matches the migrated schema', () async {
+    // onCreate must produce exactly what the migrations produce, or new
+    // installs and upgraded ones drift apart.
+    final appDatabase = AppDatabase.forPath(inMemoryDatabasePath);
+    final db = await appDatabase.database;
+
+    final columns = (await db.rawQuery('PRAGMA table_info(papers)'))
+        .map((r) => r['name'] as String)
+        .toSet();
+    for (final expected in [
+      'bibtex_key_pinned',
+      'last_read_page',
+      'total_pages',
+      'arxiv_id',
+      'pmid',
+      'read_status',
+      'queue_position',
+      'needs_review',
+      'title_normalized',
+      'update_status',
+      'updates_checked_at',
+    ]) {
+      expect(columns, contains(expected), reason: '$expected missing');
+    }
+
+    final tables = (await db.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type='table'"))
+        .map((r) => r['name'] as String)
+        .toSet();
+    expect(tables, containsAll(['notes', 'smart_collections', 'auto_exports']));
+
+    await appDatabase.close();
   });
 }
